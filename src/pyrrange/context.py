@@ -57,10 +57,7 @@ class Context:
             LookupError: If the dependency was not registered.
         """
         if name not in self._dependencies:
-            raise LookupError(
-                f"Dependency '{name}' not found in context. "
-                f"Available: {list(self._dependencies.keys())}"
-            )
+            raise LookupError(f"Dependency '{name}' not found in context. Available: {list(self._dependencies.keys())}")
         return self._dependencies[name]
 
     def has(self, name: str) -> bool:

@@ -5,7 +5,6 @@ import pytest
 from pyrrange.arrange import Arrange, step
 from pyrrange.context import Context
 
-
 # --- Test Arrange classes (simulating host project) ---
 
 
@@ -42,8 +41,7 @@ class UserArrange(Arrange):
     @step
     def with_plan(self, plan_chain: Arrange):
         user = self.context.result
-        plan_chain.context = self.context
-        plan = plan_chain.execute()
+        plan = plan_chain.bind(self.context).execute()
         user["plans"].append(plan)
         return user
 
@@ -88,12 +86,12 @@ class TestStepRecording:
 
     def test_step_preserves_args_and_kwargs(self) -> None:
         chain = CounterArrange().add(42)
-        fn, args, kwargs = chain._recorded_steps[0]
+        _fn, args, _kwargs = chain._recorded_steps[0]
         assert args == (42,)
 
     def test_step_preserves_kwargs(self) -> None:
         chain = CounterArrange().add(value=42)
-        fn, args, kwargs = chain._recorded_steps[0]
+        _fn, _args, kwargs = chain._recorded_steps[0]
         assert kwargs == {"value": 42}
 
     def test_empty_chain_has_no_steps(self) -> None:
@@ -142,35 +140,28 @@ class TestContextIntegration:
         assert result == "HELLO"
 
     def test_missing_dependency_raises_during_execution(self) -> None:
+        from pyrrange.arrange import StepError
+
         class DepArrange(Arrange):
             @step
             def use_dep(self):
                 return self.context.get("missing")
 
         ctx = Context()
-        with pytest.raises(LookupError, match="missing"):
-            DepArrange(ctx).use_dep().result
+        with pytest.raises(StepError, match="use_dep") as exc_info:
+            _result = DepArrange(ctx).use_dep().result
+        assert isinstance(exc_info.value.__cause__, LookupError)
 
 
 class TestSubChainComposition:
     def test_sub_chain_receives_parent_context(self) -> None:
         ctx = Context()
-        user = (
-            UserArrange(ctx)
-            .register(email="sub@test.com")
-            .with_plan(PlanArrange().shared(price=5.99))
-            .result
-        )
+        user = UserArrange(ctx).register(email="sub@test.com").with_plan(PlanArrange().shared(price=5.99)).result
         assert user["plans"][0]["user_email"] == "sub@test.com"
 
     def test_sub_chain_result_attached_to_parent(self) -> None:
         ctx = Context()
-        user = (
-            UserArrange(ctx)
-            .register()
-            .with_plan(PlanArrange().shared(price=5.99))
-            .result
-        )
+        user = UserArrange(ctx).register().with_plan(PlanArrange().shared(price=5.99)).result
         assert len(user["plans"]) == 1
         assert user["plans"][0]["price"] == 5.99
 
@@ -191,22 +182,13 @@ class TestSubChainComposition:
     def test_sub_chain_with_multiple_steps(self) -> None:
         ctx = Context()
         user = (
-            UserArrange(ctx)
-            .register()
-            .with_plan(PlanArrange().shared(price=9.99).with_replacements(total=20))
-            .result
+            UserArrange(ctx).register().with_plan(PlanArrange().shared(price=9.99).with_replacements(total=20)).result
         )
         assert user["plans"][0]["replacements"] == 20
 
     def test_parent_result_restored_after_sub_chain(self) -> None:
         ctx = Context()
-        user = (
-            UserArrange(ctx)
-            .register(email="parent@test.com")
-            .with_plan(PlanArrange().shared())
-            .verified()
-            .result
-        )
+        user = UserArrange(ctx).register(email="parent@test.com").with_plan(PlanArrange().shared()).verified().result
         # verified() should operate on the user, not the plan
         assert user["verified"] is True
         assert user["email"] == "parent@test.com"

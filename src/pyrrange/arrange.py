@@ -9,12 +9,40 @@ Building a chain records the steps. Calling .execute() or .result replays them.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from pyrrange.context import Context
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+class StepError(Exception):
+    """Raised when a step fails during chain execution.
+
+    Wraps the original exception with diagnostic information:
+    which step failed, its position in the chain, and the previous result.
+    """
+
+    def __init__(
+        self,
+        step_name: str,
+        step_index: int,
+        total_steps: int,
+        arrange_class: str,
+        previous_result: Any,
+        cause: BaseException,
+    ) -> None:
+        self.step_name = step_name
+        self.step_index = step_index
+        self.total_steps = total_steps
+        self.arrange_class = arrange_class
+        self.previous_result = previous_result
+        super().__init__(
+            f"Step {step_index}/{total_steps} '{step_name}' failed on {arrange_class}\n"
+            f"  Previous result: {previous_result!r}"
+        )
 
 
 def step(fn: F) -> F:
@@ -102,8 +130,21 @@ class Arrange:
                 plan_chain.context = self.context
                 return plan_chain.execute()
         """
-        for fn, args, kwargs in self._recorded_steps:
-            result = fn(self, *args, **kwargs)
+        total = len(self._recorded_steps)
+        for index, (fn, args, kwargs) in enumerate(self._recorded_steps, start=1):
+            try:
+                result = fn(self, *args, **kwargs)
+            except StepError:
+                raise
+            except Exception as exc:
+                raise StepError(
+                    step_name=fn.__name__,
+                    step_index=index,
+                    total_steps=total,
+                    arrange_class=type(self).__name__,
+                    previous_result=self.context.result,
+                    cause=exc,
+                ) from exc
             self.context.set_result(result)
         return self.context.result
 
