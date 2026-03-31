@@ -1,0 +1,95 @@
+[project]
+name = "pyrrange"
+dynamic = ["version"]
+description = "Expressive, fluent test scenario preparation for Python."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Unay Santisteban", email = "usantisteban@othercode.io" }
+]
+keywords = ["testing", "arrange", "scenarios", "fluent", "pytest"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Framework :: Pytest",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/othercodes/pyrrange"
+Repository = "https://github.com/othercodes/pyrrange.git"
+Issues = "https://github.com/othercodes/pyrrange/issues"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/pyrrange/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyrrange"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.9.0",
+    "mypy>=1.0.0",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+indent-width = 4
+exclude = [
+    ".eggs",
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "build",
+    "dist",
+    "src/pyrrange/_version.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "src"]
+addopts = "--cov=pyrrange --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+branch = true
+source = ["src/pyrrange"]
+omit = ["src/pyrrange/_version.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "pragma: no branch",
+    "if TYPE_CHECKING:",
+]
+
+[tool.mypy]
+python_version = "3.10"
+exclude = ["src/pyrrange/_version\\.py$"]
+strict = false
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
