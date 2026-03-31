@@ -45,25 +45,54 @@ class TestContextResult:
 
     def test_set_result_updates_result(self) -> None:
         ctx = Context()
-        ctx.set_result("user_obj")
+        ctx.set_result("step1", "user_obj")
         assert ctx.result == "user_obj"
 
     def test_set_result_overwrites_previous(self) -> None:
         ctx = Context()
-        ctx.set_result("first")
-        ctx.set_result("second")
+        ctx.set_result("step1", "first")
+        ctx.set_result("step2", "second")
         assert ctx.result == "second"
 
-    def test_results_tracks_all_values(self) -> None:
-        ctx = Context()
-        ctx.set_result("a")
-        ctx.set_result("b")
-        ctx.set_result("c")
-        assert ctx.results == ["a", "b", "c"]
 
-    def test_results_returns_copy(self) -> None:
+class TestContextRegistry:
+    def test_access_by_label(self) -> None:
         ctx = Context()
-        ctx.set_result("a")
-        results = ctx.results
-        results.append("mutated")
-        assert ctx.results == ["a"]
+        ctx.set_result("register", "user_obj")
+        assert ctx["register"] == "user_obj"
+
+    def test_missing_label_raises_key_error(self) -> None:
+        ctx = Context()
+        with pytest.raises(KeyError, match="No step result for label 'missing'"):
+            ctx["missing"]
+
+    def test_missing_label_shows_available(self) -> None:
+        ctx = Context()
+        ctx.set_result("register", "x")
+        with pytest.raises(KeyError, match="register"):
+            ctx["other"]
+
+    def test_same_label_overwrites(self) -> None:
+        ctx = Context()
+        ctx.set_result("user", "first")
+        ctx.set_result("user", "second")
+        assert ctx["user"] == "second"
+
+    def test_multiple_labels(self) -> None:
+        ctx = Context()
+        ctx.set_result("register", "user")
+        ctx.set_result("plan", "plan_obj")
+        assert ctx["register"] == "user"
+        assert ctx["plan"] == "plan_obj"
+
+    def test_contains_check(self) -> None:
+        ctx = Context()
+        ctx.set_result("register", "user")
+        assert "register" in ctx
+        assert "missing" not in ctx
+
+    def test_repr(self) -> None:
+        ctx = Context()
+        ctx.set_result("register", "user")
+        ctx.set_result("plan", "plan_obj")
+        assert repr(ctx) == "Context(['register', 'plan'])"

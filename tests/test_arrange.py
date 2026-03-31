@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyrrange.arrange import Arrange, step
+from pyrrange.arrange import Arrange, StepError, step
 from pyrrange.context import Context
 
 # --- Test Arrange classes (simulating host project) ---
@@ -38,10 +38,14 @@ class UserArrange(Arrange):
         user["verified"] = True
         return user
 
-    @step
+    @step("plan")
     def with_plan(self, plan_chain: Arrange):
         user = self.context.result
-        plan = plan_chain.bind(self.context).execute()
+        # Sub-chain gets its own context, seeded with the current result
+        sub_ctx = Context()
+        sub_ctx.set_result("_parent", user)
+        plan_result = plan_chain.bind(sub_ctx).execute()
+        plan = plan_result.result
         user["plans"].append(plan)
         return user
 
@@ -49,12 +53,12 @@ class UserArrange(Arrange):
 class PlanArrange(Arrange):
     """Simulates a PlanArrange sub-chain."""
 
-    @step
+    @step("plan")
     def shared(self, price: float = 9.99):
         user = self.context.result
         return {"type": "plan", "proxy_type": "shared", "price": price, "user_email": user["email"]}
 
-    @step
+    @step("plan")
     def dedicated(self, price: float = 19.99):
         user = self.context.result
         return {"type": "plan", "proxy_type": "dedicated", "price": price, "user_email": user["email"]}
@@ -84,14 +88,14 @@ class TestStepRecording:
         result = chain.add(1)
         assert result is chain
 
-    def test_step_preserves_args_and_kwargs(self) -> None:
+    def test_step_preserves_args(self) -> None:
         chain = CounterArrange().add(42)
-        _fn, args, _kwargs = chain._recorded_steps[0]
+        _fn, _label, args, _kwargs = chain._recorded_steps[0]
         assert args == (42,)
 
     def test_step_preserves_kwargs(self) -> None:
         chain = CounterArrange().add(value=42)
-        _fn, _args, kwargs = chain._recorded_steps[0]
+        _fn, _label, _args, kwargs = chain._recorded_steps[0]
         assert kwargs == {"value": 42}
 
     def test_empty_chain_has_no_steps(self) -> None:
@@ -99,31 +103,68 @@ class TestStepRecording:
         assert len(chain._recorded_steps) == 0
 
 
+class TestStepLabels:
+    def test_default_label_is_method_name(self) -> None:
+        chain = CounterArrange().add(5)
+        _fn, label, _args, _kwargs = chain._recorded_steps[0]
+        assert label == "add"
+
+    def test_custom_label(self) -> None:
+        chain = UserArrange().with_plan(PlanArrange().shared())
+        _fn, label, _args, _kwargs = chain._recorded_steps[0]
+        assert label == "plan"
+
+    def test_keyword_label(self) -> None:
+        class KeywordArrange(Arrange):
+            @step(label="custom")
+            def do_thing(self):
+                return "done"
+
+        scene = KeywordArrange().do_thing().arrange()
+        assert scene["custom"] == "done"
+
+    def test_labels_accessible_after_arrange(self) -> None:
+        scene = CounterArrange().add(5).multiply(3).arrange()
+        assert scene["add"] == 5
+        assert scene["multiply"] == 15
+
+    def test_custom_label_accessible_after_arrange(self) -> None:
+        scene = UserArrange().register().with_plan(PlanArrange().shared(price=5.99)).arrange()
+        assert scene["register"]["type"] == "user"
+        # "plan" label on with_plan returns the user (parent step returns user)
+        assert scene["plan"]["type"] == "user"
+        # The plan is inside user["plans"]
+        assert scene["plan"]["plans"][0]["type"] == "plan"
+
+    def test_same_label_overwrites(self) -> None:
+        scene = UserArrange().register().verified().arrange()
+        # register and verified share the same dict (Python mutability),
+        # so both reflect the final state
+        assert scene["register"]["verified"] is True
+        assert scene["verified"]["verified"] is True
+
+
 class TestExecution:
     def test_execute_runs_steps_in_order(self) -> None:
-        ctx = Context()
-        result = CounterArrange(ctx).add(5).multiply(3).execute()
-        assert result == 15
+        scene = CounterArrange().add(5).multiply(3).arrange()
+        assert scene.result == 15
 
-    def test_result_property_triggers_execution(self) -> None:
-        ctx = Context()
-        result = CounterArrange(ctx).add(5).multiply(3).result
-        assert result == 15
+    def test_arrange_returns_context(self) -> None:
+        scene = CounterArrange().add(5).arrange()
+        assert isinstance(scene, Context)
 
-    def test_context_result_updated_after_each_step(self) -> None:
-        ctx = Context()
-        CounterArrange(ctx).add(5).multiply(3).execute()
-        assert ctx.results == [5, 15]
+    def test_context_result_is_last_step(self) -> None:
+        scene = CounterArrange().add(5).multiply(3).arrange()
+        assert scene.result == 15
 
-    def test_execute_empty_chain_returns_none(self) -> None:
-        ctx = Context()
-        result = CounterArrange(ctx).execute()
-        assert result is None
+    def test_execute_empty_chain_returns_context(self) -> None:
+        scene = CounterArrange().arrange()
+        assert isinstance(scene, Context)
+        assert scene.result is None
 
     def test_noop_preserves_result(self) -> None:
-        ctx = Context()
-        result = CounterArrange(ctx).add(7).noop().result
-        assert result == 7
+        scene = CounterArrange().add(7).noop().arrange()
+        assert scene.result == 7
 
 
 class TestContextIntegration:
@@ -136,12 +177,10 @@ class TestContextIntegration:
 
         ctx = Context()
         ctx.set("make_thing", lambda x: x.upper())
-        result = DepArrange(ctx).use_dep().result
-        assert result == "HELLO"
+        scene = DepArrange(ctx).use_dep().arrange()
+        assert scene["use_dep"] == "HELLO"
 
     def test_missing_dependency_raises_during_execution(self) -> None:
-        from pyrrange.arrange import StepError
-
         class DepArrange(Arrange):
             @step
             def use_dep(self):
@@ -149,49 +188,48 @@ class TestContextIntegration:
 
         ctx = Context()
         with pytest.raises(StepError, match="use_dep") as exc_info:
-            _result = DepArrange(ctx).use_dep().result
+            DepArrange(ctx).use_dep().arrange()
         assert isinstance(exc_info.value.__cause__, LookupError)
 
 
 class TestSubChainComposition:
     def test_sub_chain_receives_parent_context(self) -> None:
-        ctx = Context()
-        user = UserArrange(ctx).register(email="sub@test.com").with_plan(PlanArrange().shared(price=5.99)).result
+        scene = UserArrange().register(email="sub@test.com").with_plan(PlanArrange().shared(price=5.99)).arrange()
+        user = scene["register"]
         assert user["plans"][0]["user_email"] == "sub@test.com"
 
     def test_sub_chain_result_attached_to_parent(self) -> None:
-        ctx = Context()
-        user = UserArrange(ctx).register().with_plan(PlanArrange().shared(price=5.99)).result
+        scene = UserArrange().register().with_plan(PlanArrange().shared(price=5.99)).arrange()
+        user = scene["register"]
         assert len(user["plans"]) == 1
         assert user["plans"][0]["price"] == 5.99
 
     def test_multiple_sub_chains(self) -> None:
-        ctx = Context()
-        user = (
-            UserArrange(ctx)
+        scene = (
+            UserArrange()
             .register()
             .verified()
             .with_plan(PlanArrange().shared(price=9.99))
             .with_plan(PlanArrange().dedicated(price=19.99))
-            .result
+            .arrange()
         )
+        user = scene["register"]
         assert len(user["plans"]) == 2
         assert user["plans"][0]["proxy_type"] == "shared"
         assert user["plans"][1]["proxy_type"] == "dedicated"
 
     def test_sub_chain_with_multiple_steps(self) -> None:
-        ctx = Context()
-        user = (
-            UserArrange(ctx).register().with_plan(PlanArrange().shared(price=9.99).with_replacements(total=20)).result
+        scene = (
+            UserArrange().register().with_plan(PlanArrange().shared(price=9.99).with_replacements(total=20)).arrange()
         )
+        user = scene["register"]
         assert user["plans"][0]["replacements"] == 20
 
     def test_parent_result_restored_after_sub_chain(self) -> None:
-        ctx = Context()
-        user = UserArrange(ctx).register(email="parent@test.com").with_plan(PlanArrange().shared()).verified().result
+        scene = UserArrange().register(email="parent@test.com").with_plan(PlanArrange().shared()).verified().arrange()
         # verified() should operate on the user, not the plan
-        assert user["verified"] is True
-        assert user["email"] == "parent@test.com"
+        assert scene["verified"]["verified"] is True
+        assert scene["verified"]["email"] == "parent@test.com"
 
 
 class TestBind:
@@ -207,11 +245,11 @@ class TestBind:
         result = chain.bind(ctx)
         assert result is chain
 
-    def test_bind_then_execute(self) -> None:
+    def test_bind_then_arrange(self) -> None:
         chain = CounterArrange().add(5).multiply(3)
         ctx = Context()
-        result = chain.bind(ctx).result
-        assert result == 15
+        scene = chain.bind(ctx).arrange()
+        assert scene.result == 15
 
 
 class TestCopy:
