@@ -13,16 +13,16 @@ class CounterArrange(Arrange):
 
     @step
     def add(self, value: int = 1):
-        current = self.context.result or 0
+        current = self.previous_result or 0
         return current + value
 
     @step
     def multiply(self, factor: int = 2):
-        return self.context.result * factor
+        return self.previous_result * factor
 
     @step
     def noop(self):
-        return self.context.result
+        return self.previous_result
 
 
 class UserArrange(Arrange):
@@ -34,13 +34,13 @@ class UserArrange(Arrange):
 
     @step
     def verified(self):
-        user = self.context.result
+        user = self.previous_result
         user["verified"] = True
         return user
 
     @step("plan")
     def with_plan(self, plan_chain: Arrange):
-        user = self.context.result
+        user = self.previous_result
         # Sub-chain gets its own context, seeded with the current result
         sub_ctx = Context()
         sub_ctx.set_result("_parent", user)
@@ -55,17 +55,17 @@ class PlanArrange(Arrange):
 
     @step("plan")
     def shared(self, price: float = 9.99):
-        user = self.context.result
+        user = self.previous_result
         return {"type": "plan", "proxy_type": "shared", "price": price, "user_email": user["email"]}
 
     @step("plan")
     def dedicated(self, price: float = 19.99):
-        user = self.context.result
+        user = self.previous_result
         return {"type": "plan", "proxy_type": "dedicated", "price": price, "user_email": user["email"]}
 
     @step
     def with_replacements(self, total: int = 10):
-        plan = self.context.result
+        plan = self.previous_result
         plan["replacements"] = total
         return plan
 

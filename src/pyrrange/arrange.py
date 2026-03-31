@@ -128,6 +128,20 @@ class Arrange:
         self._recorded_steps: list[tuple[Callable[..., Any], str, tuple[Any, ...], dict[str, Any]]] = []
         self.context: Context = context or Context()
 
+    @property
+    def previous_result(self) -> Any:
+        """The return value of the most recently executed step.
+
+        Use this inside @step methods to access what the previous step produced::
+
+            @step("user")
+            def verified(self):
+                user = self.previous_result
+                activate_account(user)
+                return user
+        """
+        return self.context.result
+
     def arrange(self) -> Context:
         """Execute the chain and return the context with labeled results.
 
