@@ -19,7 +19,6 @@ class StepError(Exception):
         total_steps: int,
         arrange_class: str,
         previous_result: Any,
-        cause: BaseException,
     ) -> None:
         self.step_name = step_name
         self.step_index = step_index
@@ -146,7 +145,6 @@ class Arrange:
                     total_steps=total,
                     arrange_class=type(self).__name__,
                     previous_result=self.context.result,
-                    cause=exc,
                 ) from exc
             self.context.set_result(record.label, result)
         return Scene(self.context, self)
