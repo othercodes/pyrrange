@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pyrrange.arrange import Arrange, step
-from pyrrange.context import Context
+from pyrrange.scene import Scene
 
 
 class TrackedArrange(Arrange):
@@ -14,13 +14,9 @@ class TrackedArrange(Arrange):
     def create(self, previous):
         return "resource"
 
-    def teardown(self, scene: Context) -> None:
+    def teardown(self, scene: Scene) -> None:
         TrackedArrange.torn_down = True
         TrackedArrange.torn_down_scene = scene
-
-    def setup_method(self):
-        TrackedArrange.torn_down = False
-        TrackedArrange.torn_down_scene = None
 
 
 class TestTeardown:
@@ -59,15 +55,13 @@ class TestTeardown:
         assert not TrackedArrange.torn_down
 
 
-class TestContextTeardown:
-    def test_context_teardown_without_registration(self) -> None:
-        ctx = Context()
-        ctx.teardown()  # no-op, should not raise
+class TestSceneAccess:
+    def test_contains_check(self) -> None:
+        scene = TrackedArrange().create().arrange()
+        assert "create" in scene
+        assert "missing" not in scene
 
-    def test_context_set_teardown_and_call(self) -> None:
-        called = []
-        ctx = Context()
-        ctx.set_teardown(lambda scene: called.append(scene))
-        ctx.teardown()
-        assert len(called) == 1
-        assert called[0] is ctx
+    def test_repr(self) -> None:
+        scene = TrackedArrange().create().arrange()
+        assert "Context" in repr(scene)
+        assert "create" in repr(scene)

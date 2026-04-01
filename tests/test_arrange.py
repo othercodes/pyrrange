@@ -4,6 +4,7 @@ import pytest
 
 from pyrrange.arrange import Arrange, StepError, step
 from pyrrange.context import Context
+from pyrrange.scene import Scene
 
 # --- Test Arrange classes (simulating host project) ---
 
@@ -143,7 +144,7 @@ class TestExecution:
 
     def test_arrange_returns_context(self) -> None:
         scene = CounterArrange().add(5).arrange()
-        assert isinstance(scene, Context)
+        assert isinstance(scene, Scene)
 
     def test_context_result_is_last_step(self) -> None:
         scene = CounterArrange().add(5).multiply(3).arrange()
@@ -151,7 +152,7 @@ class TestExecution:
 
     def test_execute_empty_chain_returns_context(self) -> None:
         scene = CounterArrange().arrange()
-        assert isinstance(scene, Context)
+        assert isinstance(scene, Scene)
         assert scene.result is None
 
     def test_noop_preserves_result(self) -> None:

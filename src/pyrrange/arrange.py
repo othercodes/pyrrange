@@ -18,6 +18,7 @@ from functools import wraps
 from typing import Any, TypeVar, overload
 
 from pyrrange.context import Context
+from pyrrange.scene import Scene
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -178,7 +179,7 @@ class Arrange:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
         return self
 
-    def teardown(self, scene: Context) -> None:
+    def teardown(self, scene: Scene) -> None:
         """Override to clean up resources created during arrange.
 
         Called by ``scene.teardown()`` after the test completes::
@@ -193,18 +194,18 @@ class Arrange:
             scene.teardown()
         """
 
-    def arrange(self) -> Context:
-        """Execute the chain and return the context with labeled results.
+    def arrange(self) -> Scene:
+        """Execute the chain and return a Scene with labeled results.
 
         This is the primary entry point to trigger execution::
 
             scene = UserArrange().register().verified().arrange()
-            user = scene["register"]
+            user = scene["user"]
         """
         return self.execute()
 
-    def execute(self) -> Context:
-        """Replay all recorded steps and return the context.
+    def execute(self) -> Scene:
+        """Replay all recorded steps and return a Scene.
 
         Each step receives the previous result as its first argument.
         The return value is stored in the context under the step's label.
@@ -225,8 +226,7 @@ class Arrange:
                     cause=exc,
                 ) from exc
             self.context.set_result(record.label, result)
-        self.context.set_teardown(self.teardown)
-        return self.context
+        return Scene(self.context, self)
 
     def copy(self) -> Arrange:
         """Create a deep copy of this chain for safe reuse."""

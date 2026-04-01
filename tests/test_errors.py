@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pyrrange.arrange import Arrange, StepError, step
-from pyrrange.context import Context
+from pyrrange.scene import Scene
 
 
 class FailingArrange(Arrange):
@@ -30,7 +30,7 @@ class ParentArrange(Arrange):
         return child_chain.bind(self.context).execute()
 
 
-def _arrange(chain: Arrange) -> Context:
+def _arrange(chain: Arrange) -> Scene:
     """Helper to trigger .arrange() in a way that satisfies B018 lint rule."""
     return chain.arrange()
 
