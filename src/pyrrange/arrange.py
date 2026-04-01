@@ -99,7 +99,7 @@ class _ThenRecord:
         self.args = args
         self.kwargs = kwargs
 
-    def execute(self, arrange: Arrange, previous: Any) -> Any:
+    def execute(self, _arrange: Arrange, previous: Any) -> Any:
         return self.fn(previous, *self.args, **self.kwargs)
 
 
