@@ -1,5 +1,3 @@
-"""Context — data container for step results and project dependencies."""
-
 from __future__ import annotations
 
 from typing import Any

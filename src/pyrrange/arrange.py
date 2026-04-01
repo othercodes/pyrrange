@@ -1,5 +1,3 @@
-"""Arrange — fluent chain of domain operations for test preparation."""
-
 from __future__ import annotations
 
 import copy

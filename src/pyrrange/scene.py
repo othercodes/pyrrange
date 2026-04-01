@@ -1,5 +1,3 @@
-"""Scene — the result of executing an arrange chain."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
