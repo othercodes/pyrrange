@@ -12,36 +12,33 @@ class CounterArrange(Arrange):
     """Simple arrange for testing step mechanics."""
 
     @step
-    def add(self, value: int = 1):
-        current = self.previous_result or 0
+    def add(self, previous, value: int = 1):
+        current = previous or 0
         return current + value
 
     @step
-    def multiply(self, factor: int = 2):
-        return self.previous_result * factor
+    def multiply(self, previous, factor: int = 2):
+        return previous * factor
 
     @step
-    def noop(self):
-        return self.previous_result
+    def noop(self, previous):
+        return previous
 
 
 class UserArrange(Arrange):
     """Simulates a real-world UserArrange for integration testing."""
 
     @step
-    def register(self, email: str = "test@example.com"):
+    def register(self, previous, email: str = "test@example.com"):
         return {"type": "user", "email": email, "verified": False, "plans": []}
 
     @step
-    def verified(self):
-        user = self.previous_result
+    def verified(self, user):
         user["verified"] = True
         return user
 
     @step("plan")
-    def with_plan(self, plan_chain: Arrange):
-        user = self.previous_result
-        # Sub-chain gets its own context, seeded with the current result
+    def with_plan(self, user, plan_chain: Arrange):
         sub_ctx = Context()
         sub_ctx.set_result("_parent", user)
         plan_result = plan_chain.bind(sub_ctx).execute()
@@ -54,18 +51,17 @@ class PlanArrange(Arrange):
     """Simulates a PlanArrange sub-chain."""
 
     @step("plan")
-    def shared(self, price: float = 9.99):
-        user = self.previous_result
+    def shared(self, previous, price: float = 9.99):
+        user = previous
         return {"type": "plan", "proxy_type": "shared", "price": price, "user_email": user["email"]}
 
     @step("plan")
-    def dedicated(self, price: float = 19.99):
-        user = self.previous_result
+    def dedicated(self, previous, price: float = 19.99):
+        user = previous
         return {"type": "plan", "proxy_type": "dedicated", "price": price, "user_email": user["email"]}
 
     @step
-    def with_replacements(self, total: int = 10):
-        plan = self.previous_result
+    def with_replacements(self, plan, total: int = 10):
         plan["replacements"] = total
         return plan
 
@@ -90,13 +86,11 @@ class TestStepRecording:
 
     def test_step_preserves_args(self) -> None:
         chain = CounterArrange().add(42)
-        _fn, _label, args, _kwargs = chain._recorded_steps[0]
-        assert args == (42,)
+        assert chain._recorded_steps[0].args == (42,)
 
     def test_step_preserves_kwargs(self) -> None:
         chain = CounterArrange().add(value=42)
-        _fn, _label, _args, kwargs = chain._recorded_steps[0]
-        assert kwargs == {"value": 42}
+        assert chain._recorded_steps[0].kwargs == {"value": 42}
 
     def test_empty_chain_has_no_steps(self) -> None:
         chain = CounterArrange()
@@ -106,18 +100,16 @@ class TestStepRecording:
 class TestStepLabels:
     def test_default_label_is_method_name(self) -> None:
         chain = CounterArrange().add(5)
-        _fn, label, _args, _kwargs = chain._recorded_steps[0]
-        assert label == "add"
+        assert chain._recorded_steps[0].label == "add"
 
     def test_custom_label(self) -> None:
         chain = UserArrange().with_plan(PlanArrange().shared())
-        _fn, label, _args, _kwargs = chain._recorded_steps[0]
-        assert label == "plan"
+        assert chain._recorded_steps[0].label == "plan"
 
     def test_keyword_label(self) -> None:
         class KeywordArrange(Arrange):
             @step(label="custom")
-            def do_thing(self):
+            def do_thing(self, previous):
                 return "done"
 
         scene = KeywordArrange().do_thing().arrange()
@@ -166,12 +158,95 @@ class TestExecution:
         scene = CounterArrange().add(7).noop().arrange()
         assert scene.result == 7
 
+    def test_first_step_receives_none(self) -> None:
+        class CheckArrange(Arrange):
+            @step
+            def check(self, previous):
+                assert previous is None
+                return "ok"
+
+        scene = CheckArrange().check().arrange()
+        assert scene["check"] == "ok"
+
+    def test_second_step_receives_first_result(self) -> None:
+        class CheckArrange(Arrange):
+            @step
+            def first(self, previous):
+                return "hello"
+
+            @step
+            def second(self, previous):
+                return previous.upper()
+
+        scene = CheckArrange().first().second().arrange()
+        assert scene["second"] == "HELLO"
+
+
+class TestThen:
+    def test_then_receives_previous_result(self) -> None:
+        scene = CounterArrange().add(5).then("doubled", lambda x: x * 2).arrange()
+        assert scene["doubled"] == 10
+
+    def test_then_with_none_previous(self) -> None:
+        scene = Arrange().then("start", lambda prev: "hello").arrange()
+        assert scene["start"] == "hello"
+
+    def test_then_chains_with_steps(self) -> None:
+        scene = CounterArrange().add(10).then("formatted", lambda n: f"value={n}").arrange()
+        assert scene["add"] == 10
+        assert scene["formatted"] == "value=10"
+
+    def test_then_with_named_function(self) -> None:
+        def double_it(previous):
+            return previous * 2
+
+        scene = CounterArrange().add(5).then("doubled", double_it).arrange()
+        assert scene["doubled"] == 10
+
+    def test_then_with_extra_args(self) -> None:
+        def multiply(previous, factor):
+            return previous * factor
+
+        scene = CounterArrange().add(5).then("result", multiply, 3).arrange()
+        assert scene["result"] == 15
+
+    def test_then_with_extra_kwargs(self) -> None:
+        def multiply(previous, factor=2):
+            return previous * factor
+
+        scene = CounterArrange().add(5).then("result", multiply, factor=4).arrange()
+        assert scene["result"] == 20
+
+    def test_then_returns_self_for_chaining(self) -> None:
+        chain = Arrange()
+        result = chain.then("x", lambda p: p)
+        assert result is chain
+
+    def test_then_error_wrapped_in_step_error(self) -> None:
+        def bad_fn(previous):
+            raise ValueError("boom")
+
+        with pytest.raises(StepError, match="'fail'") as exc_info:
+            Arrange().then("fail", bad_fn).arrange()
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert str(exc_info.value.__cause__) == "boom"
+
+    def test_then_simulates_authenticated_client(self) -> None:
+        """Real-world pattern: create infrastructure from parent entity."""
+
+        def create_client(user):
+            return {"type": "client", "token": f"token-for-{user['email']}"}
+
+        scene = UserArrange().register(email="test@example.com").verified().then("api_client", create_client).arrange()
+        assert scene["api_client"]["token"] == "token-for-test@example.com"
+        assert scene["verified"]["verified"] is True
+
 
 class TestContextIntegration:
     def test_steps_access_dependencies(self) -> None:
         class DepArrange(Arrange):
             @step
-            def use_dep(self):
+            def use_dep(self, previous):
                 make_thing = self.context.get("make_thing")
                 return make_thing("hello")
 
@@ -183,7 +258,7 @@ class TestContextIntegration:
     def test_missing_dependency_raises_during_execution(self) -> None:
         class DepArrange(Arrange):
             @step
-            def use_dep(self):
+            def use_dep(self, previous):
                 return self.context.get("missing")
 
         ctx = Context()

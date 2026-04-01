@@ -8,25 +8,25 @@ from pyrrange.context import Context
 
 class FailingArrange(Arrange):
     @step
-    def succeed(self):
+    def succeed(self, previous):
         return "ok"
 
     @step
-    def fail_with_key_error(self):
+    def fail_with_key_error(self, previous):
         return {}["missing"]
 
     @step
-    def fail_with_value_error(self):
+    def fail_with_value_error(self, previous):
         raise ValueError("bad value")
 
 
 class ParentArrange(Arrange):
     @step
-    def start(self):
+    def start(self, previous):
         return {"name": "parent"}
 
     @step
-    def with_child(self, child_chain: Arrange):
+    def with_child(self, previous, child_chain: Arrange):
         return child_chain.bind(self.context).execute()
 
 

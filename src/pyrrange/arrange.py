@@ -5,6 +5,9 @@ operation (register a user, verify email, purchase a plan, etc.).
 
 Building a chain records the steps. Calling .arrange() replays them and
 returns a registry of labeled results.
+
+Every step — whether @step or .then() — receives the previous result as its
+first argument and returns the next result. Explicit data flow, no hidden state.
 """
 
 from __future__ import annotations
@@ -60,20 +63,19 @@ def step(fn: F | str | None = None, label: str | None = None) -> F | Callable[[F
     Can be used with or without a label::
 
         @step
-        def register(self, email="test@example.com"):
+        def register(self, previous, email="test@example.com"):
             ...  # label defaults to "register"
 
         @step("user")
-        def register(self, email="test@example.com"):
+        def register(self, previous, email="test@example.com"):
             ...  # label is "user"
 
-    When called on an Arrange instance, the method is recorded (not executed).
-    Execution happens when .arrange() is called.
+    The decorated method receives the previous step's result as its first
+    argument (after self). Return value becomes the next result.
     """
     if isinstance(fn, str):
         # Called as @step("label")
-        explicit_label = fn
-        return _make_step_decorator(explicit_label)
+        return _make_step_decorator(fn)
 
     if fn is None:
         # Called as @step(label="label")
@@ -89,7 +91,7 @@ def _make_step_decorator(label: str | None) -> Callable[[F], F]:
 
         @wraps(fn)
         def wrapper(self: Arrange, *args: Any, **kwargs: Any) -> Arrange:
-            self._recorded_steps.append((fn, step_label, args, kwargs))
+            self._recorded_steps.append(_StepRecord(fn, step_label, args, kwargs))
             return self
 
         wrapper._original = fn  # type: ignore[attr-defined]
@@ -99,48 +101,82 @@ def _make_step_decorator(label: str | None) -> Callable[[F], F]:
     return decorator
 
 
+class _StepRecord:
+    """Internal record of a @step method to be executed."""
+
+    __slots__ = ("args", "fn", "kwargs", "label")
+
+    def __init__(self, fn: Callable[..., Any], label: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        self.fn = fn
+        self.label = label
+        self.args = args
+        self.kwargs = kwargs
+
+    def execute(self, arrange: Arrange, previous: Any) -> Any:
+        return self.fn(arrange, previous, *self.args, **self.kwargs)
+
+
+class _ThenRecord:
+    """Internal record of a .then() step to be executed."""
+
+    __slots__ = ("args", "fn", "kwargs", "label")
+
+    def __init__(self, fn: Callable[..., Any], label: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        self.fn = fn
+        self.label = label
+        self.args = args
+        self.kwargs = kwargs
+
+    def execute(self, arrange: Arrange, previous: Any) -> Any:
+        return self.fn(previous, *self.args, **self.kwargs)
+
+
 class Arrange:
     """Base class for defining test preparation chains.
 
     Subclass and define @step methods for each domain operation.
     Build chains via fluent calls, then call .arrange() to execute.
 
-    Example::
+    Every step receives the previous result as its first argument::
 
         class UserArrange(Arrange):
-            @step
-            def register(self, email="test@example.com"):
+            @step("user")
+            def register(self, previous, email="test@example.com"):
+                # previous is None (first step)
                 ...
+                return user
 
             @step("user")
-            def verified(self):
-                ...
+            def verified(self, user):
+                # user = return value of register
+                activate_account(user)
+                return user
 
-        # Execute and access results by label
-        scene = UserArrange().register().verified().arrange()
-        user = scene["user"]
-
-        # Sub-chain (deferred, executed by parent)
-        plan_chain = PlanArrange().shared(price=9.99)
+        # Inline steps with .then()
+        scene = (
+            UserArrange()
+                .register()
+                .verified()
+                .then("api_client", create_authenticated_client)
+                .arrange()
+        )
     """
 
     def __init__(self, context: Context | None = None) -> None:
-        self._recorded_steps: list[tuple[Callable[..., Any], str, tuple[Any, ...], dict[str, Any]]] = []
+        self._recorded_steps: list[_StepRecord | _ThenRecord] = []
         self.context: Context = context or Context()
 
-    @property
-    def previous_result(self) -> Any:
-        """The return value of the most recently executed step.
+    def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
+        """Add an inline step that receives the previous result.
 
-        Use this inside @step methods to access what the previous step produced::
+        The function is called with ``fn(previous_result, *args, **kwargs)``
+        and its return value is stored under ``label``::
 
-            @step("user")
-            def verified(self):
-                user = self.previous_result
-                activate_account(user)
-                return user
+            .then("api_client", create_authenticated_client)
+            .then("plan", lambda user: make_plan(user, {"proxy_type": "shared"}))
         """
-        return self.context.result
+        self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
+        return self
 
     def arrange(self) -> Context:
         """Execute the chain and return the context with labeled results.
@@ -149,55 +185,35 @@ class Arrange:
 
             scene = UserArrange().register().verified().arrange()
             user = scene["register"]
-            # or scene["verified"]
         """
         return self.execute()
 
     def execute(self) -> Context:
         """Replay all recorded steps and return the context.
 
-        Each step's return value is stored in the context under its label.
-        Steps access the previous result via ``self.context.result``
-        and dependencies via ``self.context.get("name")``.
-
-        For sub-chains, the parent step should bind context before calling
-        execute::
-
-            @step("plan")
-            def with_plan(self, plan_chain):
-                return plan_chain.bind(self.context).execute()
+        Each step receives the previous result as its first argument.
+        The return value is stored in the context under the step's label.
         """
         total = len(self._recorded_steps)
-        for index, (fn, label, args, kwargs) in enumerate(self._recorded_steps, start=1):
+        for index, record in enumerate(self._recorded_steps, start=1):
             try:
-                result = fn(self, *args, **kwargs)
+                result = record.execute(self, self.context.result)
             except StepError:
                 raise
             except Exception as exc:
                 raise StepError(
-                    step_name=label,
+                    step_name=record.label,
                     step_index=index,
                     total_steps=total,
                     arrange_class=type(self).__name__,
                     previous_result=self.context.result,
                     cause=exc,
                 ) from exc
-            self.context.set_result(label, result)
+            self.context.set_result(record.label, result)
         return self.context
 
     def copy(self) -> Arrange:
-        """Create a deep copy of this chain for safe reuse.
-
-        Useful for scenario definitions that are shared across tests::
-
-            default_user = UserArrange().register().verified()
-
-            def test_a(ctx):
-                scene = default_user.copy().bind(ctx).arrange()
-
-            def test_b(ctx):
-                scene = default_user.copy().bind(ctx).arrange()
-        """
+        """Create a deep copy of this chain for safe reuse."""
         return copy.deepcopy(self)
 
     def bind(self, context: Context) -> Arrange:
