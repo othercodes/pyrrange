@@ -1,8 +1,4 @@
-"""Arrange — fluent chain of domain operations for test preparation.
-
-Every step — whether @step or .then() — receives the previous result as its
-first argument and returns the next result. Explicit data flow, no hidden state.
-"""
+"""Arrange — fluent chain of domain operations for test preparation."""
 
 from __future__ import annotations
 
@@ -18,8 +14,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 class StepError(Exception):
-    """Wraps a step failure with diagnostic info: step name, index, previous result."""
-
     def __init__(
         self,
         step_name: str,
@@ -115,14 +109,14 @@ class _ThenRecord:
 class Arrange:
     """Base class for test preparation chains.
 
-    Subclass and define @step methods for each domain operation::
+    Usage::
 
         class UserArrange(Arrange):
             @step("user")
             def register(self, previous, email="test@example.com"):
                 ...
 
-        scene = UserArrange().register().verified().arrange()
+        scene = UserArrange().register().arrange()
         user = scene["user"]
     """
 
@@ -131,19 +125,16 @@ class Arrange:
         self.context: Context = context or Context()
 
     def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
-        """Add an inline step: ``fn(previous, *args, **kwargs)`` stored under ``label``."""
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
         return self
 
     def teardown(self, scene: Scene) -> None:
-        """Override to clean up resources created during arrange."""
+        pass
 
     def arrange(self) -> Scene:
-        """Execute the chain and return a Scene with labeled results."""
         return self.execute()
 
     def execute(self) -> Scene:
-        """Replay all recorded steps and return a Scene."""
         total = len(self._recorded_steps)
         for index, record in enumerate(self._recorded_steps, start=1):
             try:
@@ -163,10 +154,8 @@ class Arrange:
         return Scene(self.context, self)
 
     def copy(self) -> Arrange:
-        """Create a deep copy of this chain for safe reuse."""
         return copy.deepcopy(self)
 
     def bind(self, context: Context) -> Arrange:
-        """Bind a context to this chain for deferred execution."""
         self.context = context
         return self
