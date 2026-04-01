@@ -1,11 +1,5 @@
 """Arrange — fluent chain of domain operations for test preparation.
 
-Developers subclass Arrange and define @step methods. Each step is a domain
-operation (register a user, verify email, purchase a plan, etc.).
-
-Building a chain records the steps. Calling .arrange() replays them and
-returns a registry of labeled results.
-
 Every step — whether @step or .then() — receives the previous result as its
 first argument and returns the next result. Explicit data flow, no hidden state.
 """
@@ -24,11 +18,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 class StepError(Exception):
-    """Raised when a step fails during chain execution.
-
-    Wraps the original exception with diagnostic information:
-    which step failed, its position in the chain, and the previous result.
-    """
+    """Wraps a step failure with diagnostic info: step name, index, previous result."""
 
     def __init__(
         self,
@@ -61,28 +51,22 @@ def step(label: str) -> Callable[[F], F]: ...  # pragma: no cover
 def step(fn: F | str | None = None, label: str | None = None) -> F | Callable[[F], F]:  # type: ignore[misc]
     """Mark a method as a recordable step.
 
-    Can be used with or without a label::
+    Usage::
 
         @step
         def register(self, previous, email="test@example.com"):
-            ...  # label defaults to "register"
+            ...
 
         @step("user")
         def register(self, previous, email="test@example.com"):
-            ...  # label is "user"
-
-    The decorated method receives the previous step's result as its first
-    argument (after self). Return value becomes the next result.
+            ...
     """
     if isinstance(fn, str):
-        # Called as @step("label")
         return _make_step_decorator(fn)
 
     if fn is None:
-        # Called as @step(label="label")
         return _make_step_decorator(label)
 
-    # Called as @step (no parentheses)
     return _make_step_decorator(None)(fn)
 
 
@@ -103,8 +87,6 @@ def _make_step_decorator(label: str | None) -> Callable[[F], F]:
 
 
 class _StepRecord:
-    """Internal record of a @step method to be executed."""
-
     __slots__ = ("args", "fn", "kwargs", "label")
 
     def __init__(self, fn: Callable[..., Any], label: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
@@ -118,8 +100,6 @@ class _StepRecord:
 
 
 class _ThenRecord:
-    """Internal record of a .then() step to be executed."""
-
     __slots__ = ("args", "fn", "kwargs", "label")
 
     def __init__(self, fn: Callable[..., Any], label: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
@@ -133,34 +113,17 @@ class _ThenRecord:
 
 
 class Arrange:
-    """Base class for defining test preparation chains.
+    """Base class for test preparation chains.
 
-    Subclass and define @step methods for each domain operation.
-    Build chains via fluent calls, then call .arrange() to execute.
-
-    Every step receives the previous result as its first argument::
+    Subclass and define @step methods for each domain operation::
 
         class UserArrange(Arrange):
             @step("user")
             def register(self, previous, email="test@example.com"):
-                # previous is None (first step)
                 ...
-                return user
 
-            @step("user")
-            def verified(self, user):
-                # user = return value of register
-                activate_account(user)
-                return user
-
-        # Inline steps with .then()
-        scene = (
-            UserArrange()
-                .register()
-                .verified()
-                .then("api_client", create_authenticated_client)
-                .arrange()
-        )
+        scene = UserArrange().register().verified().arrange()
+        user = scene["user"]
     """
 
     def __init__(self, context: Context | None = None) -> None:
@@ -168,48 +131,19 @@ class Arrange:
         self.context: Context = context or Context()
 
     def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
-        """Add an inline step that receives the previous result.
-
-        The function is called with ``fn(previous_result, *args, **kwargs)``
-        and its return value is stored under ``label``::
-
-            .then("api_client", create_authenticated_client)
-            .then("plan", lambda user: make_plan(user, {"proxy_type": "shared"}))
-        """
+        """Add an inline step: ``fn(previous, *args, **kwargs)`` stored under ``label``."""
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
         return self
 
     def teardown(self, scene: Scene) -> None:
-        """Override to clean up resources created during arrange.
-
-        Called by ``scene.teardown()`` after the test completes::
-
-            class UserArrange(Arrange):
-                def teardown(self, scene):
-                    user = scene["user"]
-                    user.delete()
-
-            scene = user_arrange.register().arrange()
-            # ... test ...
-            scene.teardown()
-        """
+        """Override to clean up resources created during arrange."""
 
     def arrange(self) -> Scene:
-        """Execute the chain and return a Scene with labeled results.
-
-        This is the primary entry point to trigger execution::
-
-            scene = UserArrange().register().verified().arrange()
-            user = scene["user"]
-        """
+        """Execute the chain and return a Scene with labeled results."""
         return self.execute()
 
     def execute(self) -> Scene:
-        """Replay all recorded steps and return a Scene.
-
-        Each step receives the previous result as its first argument.
-        The return value is stored in the context under the step's label.
-        """
+        """Replay all recorded steps and return a Scene."""
         total = len(self._recorded_steps)
         for index, record in enumerate(self._recorded_steps, start=1):
             try:
@@ -233,11 +167,6 @@ class Arrange:
         return copy.deepcopy(self)
 
     def bind(self, context: Context) -> Arrange:
-        """Bind a context to this chain (for deferred execution).
-
-        Returns self for chaining::
-
-            scene = chain.bind(ctx).arrange()
-        """
+        """Bind a context to this chain for deferred execution."""
         self.context = context
         return self

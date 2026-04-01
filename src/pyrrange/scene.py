@@ -1,7 +1,6 @@
 """Scene — the result of executing an arrange chain.
 
-A Scene wraps the Context (data access) and the Arrange (teardown).
-Tests interact with Scene to access created objects and clean up.
+Wraps Context (data access) and Arrange (teardown) into a single object.
 """
 
 from __future__ import annotations
@@ -34,22 +33,13 @@ class Scene:
         return self._context.result
 
     def __getitem__(self, label: str) -> Any:
-        """Access a step result by label."""
         return self._context[label]
 
     def __contains__(self, label: str) -> bool:
-        """Check if a step result exists for a label."""
         return label in self._context
 
     def teardown(self) -> None:
-        """Clean up resources created during arrange.
-
-        Delegates to the Arrange's teardown method::
-
-            scene = user_arrange.register().arrange()
-            # ... test ...
-            scene.teardown()
-        """
+        """Delegates to the Arrange's teardown method."""
         self._arrange.teardown(self)
 
     def __repr__(self) -> str:
