@@ -178,6 +178,21 @@ class Arrange:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
         return self
 
+    def teardown(self, scene: Context) -> None:
+        """Override to clean up resources created during arrange.
+
+        Called by ``scene.teardown()`` after the test completes::
+
+            class UserArrange(Arrange):
+                def teardown(self, scene):
+                    user = scene["user"]
+                    user.delete()
+
+            scene = user_arrange.register().arrange()
+            # ... test ...
+            scene.teardown()
+        """
+
     def arrange(self) -> Context:
         """Execute the chain and return the context with labeled results.
 
@@ -210,6 +225,7 @@ class Arrange:
                     cause=exc,
                 ) from exc
             self.context.set_result(record.label, result)
+        self.context.set_teardown(self.teardown)
         return self.context
 
     def copy(self) -> Arrange:

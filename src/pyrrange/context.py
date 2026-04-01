@@ -8,6 +8,7 @@ The context holds:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 
@@ -37,6 +38,7 @@ class Context:
         self._dependencies: dict[str, Any] = {}
         self._registry: dict[str, Any] = {}
         self._result: Any = None
+        self._teardown_fn: Callable[..., None] | None = None
 
     @property
     def result(self) -> Any:
@@ -83,6 +85,22 @@ class Context:
     def __contains__(self, label: str) -> bool:
         """Check if a step result exists for a label."""
         return label in self._registry
+
+    def set_teardown(self, fn: Callable[..., None]) -> None:
+        """Register a teardown function to be called by teardown()."""
+        self._teardown_fn = fn
+
+    def teardown(self) -> None:
+        """Run the registered teardown function.
+
+        Called by the test after arrange to clean up created resources::
+
+            scene = user_arrange.register().verified().arrange()
+            # ... test ...
+            scene.teardown()
+        """
+        if self._teardown_fn is not None:
+            self._teardown_fn(self)
 
     def __repr__(self) -> str:
         labels = list(self._registry.keys())
