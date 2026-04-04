@@ -15,10 +15,11 @@ Pyrrange solves this by letting tests declare exactly what state they need throu
 
 - Fluent, chainable API for test state preparation
 - Operation-based: steps call real use cases, not create DB rows directly
-- Labeled results: access any step's output by name
+- Labeled results: access any step's output by name via attribute or dict access
 - Automatic dependency injection: step parameters are resolved from context by name
+- Optional typed scenes: declare a `SceneType` for full IDE autocomplete and type checking
 - Inline steps via `.then()` for ad-hoc logic
-- Teardown support for resource cleanup
+- Teardown support with context manager for guaranteed cleanup
 - Framework-agnostic: works with Django, FastAPI, or any Python project
 
 ## Requirements
@@ -91,13 +92,23 @@ This means every dependency is **typed in the signature** — your IDE gives aut
 
 ### Use in tests
 
+With context manager (recommended — guarantees teardown):
+
+```python
+def test_login(account_arrange):
+    with account_arrange.register().arrange() as scene:
+        response = client.post("/login", {"email": scene.user.email, "password": "secret"})
+        assert response.status_code == 200
+```
+
+Without context manager:
+
 ```python
 def test_login(account_arrange):
     scene = account_arrange.register().arrange()
-    user = scene["user"]
-
-    response = client.post("/login", {"email": user.email, "password": "secret"})
+    response = client.post("/login", {"email": scene.user.email, "password": "secret"})
     assert response.status_code == 200
+    scene.teardown()
 ```
 
 Each test declares only the steps it needs:
@@ -133,8 +144,8 @@ class OrderArrange(Arrange):
         return generate_receipt(order)
 
 scene = OrderArrange().create().paid().with_receipt().arrange()
-order = scene["order"]
-receipt = scene["receipt"]
+order = scene.order
+receipt = scene.receipt
 ```
 
 > **Note:** When multiple steps share the same label (like `"order"` above), the label always points to the latest result. Steps that need the value use injection by matching the label name in their parameter list.
@@ -154,8 +165,8 @@ scene = (
         .then("token", create_api_token)
         .arrange()
 )
-user = scene["user"]
-token = scene["token"]
+user = scene.user
+token = scene.token
 ```
 
 Works with lambdas too — the parameter name is the injection key:
@@ -180,19 +191,44 @@ class AccountArrange(Arrange):
         return register_user(email=email)
 
     def teardown(self, scene):
-        scene["user"].delete()
+        scene.user.delete()
 ```
 
 Use the context manager to guarantee teardown runs, even if the test crashes:
 
 ```python
 with account_arrange.register().arrange() as scene:
-    user = scene["user"]
+    user = scene.user
     # ... test ...
 # teardown runs automatically on exit
 ```
 
 You can also call `scene.teardown()` manually if you prefer explicit control.
+
+### Typed Scene
+
+By default, `scene.user` returns `Any`. For full IDE autocomplete and type checking, declare a `SceneType` on your Arrange:
+
+```python
+from pyrrange import Arrange, Scene, step
+
+class AccountArrange(Arrange):
+    class SceneType(Scene):
+        user: User
+        api_client: APIClient
+
+    @step("user")
+    def register(self, email="user@example.com") -> User:
+        return register_user(email=email)
+
+    @step("api_client")
+    def with_client(self, user: User) -> APIClient:
+        return create_client(user)
+```
+
+When `SceneType` is declared, `.arrange()` returns an instance of that subclass. Your IDE sees `scene.user` as `User` and `scene.api_client` as `APIClient`.
+
+`SceneType` is optional — without it, attribute access still works but returns `Any`. Both `scene.user` and `scene["user"]` are always available.
 
 ### Expose arranges as fixtures
 
@@ -202,8 +238,8 @@ def account_arrange():
     return AccountArrange()
 
 def test_something(account_arrange):
-    scene = account_arrange.register().verified().arrange()
-    user = scene["user"]
+    with account_arrange.register().verified().arrange() as scene:
+        user = scene.user
 ```
 
 ### Chain shortcuts
