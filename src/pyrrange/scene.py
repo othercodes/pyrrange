@@ -16,6 +16,12 @@ class Scene:
     def __getitem__(self, label: str) -> Any:
         return self._context[label]
 
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._context[name]
+        except KeyError:
+            raise AttributeError(f"Scene has no label '{name}'. Available: {self._context!r}") from None
+
     def __contains__(self, label: str) -> bool:
         return label in self._context
 

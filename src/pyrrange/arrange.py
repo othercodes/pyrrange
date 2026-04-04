@@ -152,4 +152,5 @@ class Arrange:
                     previous_result=self._context._last_result,
                 ) from exc
             self._context.set_result(record.label, result)
-        return Scene(self._context, self)
+        scene_cls = getattr(type(self), "SceneType", Scene)
+        return scene_cls(self._context, self)

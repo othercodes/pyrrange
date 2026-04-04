@@ -212,3 +212,43 @@ def test_then_should_wrap_error_in_step_error() -> None:
         Arrange().then("fail", bad_fn).arrange()
     assert isinstance(exc_info.value.__cause__, ValueError)
     assert str(exc_info.value.__cause__) == "boom"
+
+
+def test_scene_should_support_attribute_access() -> None:
+    scene = UserArrange().register().verified().arrange()
+    assert scene.user["verified"] is True
+    assert scene.user["email"] == "test@example.com"
+
+
+def test_scene_attribute_access_should_raise_on_missing_label() -> None:
+    scene = UserArrange().register().arrange()
+    with pytest.raises(AttributeError, match="no label 'missing'"):
+        _unused = scene.missing
+
+
+def test_scene_should_support_both_dict_and_attribute_access() -> None:
+    scene = OrderArrange().create().paid().with_receipt().arrange()
+    assert scene["order"] == scene.order
+    assert scene["receipt"] == scene.receipt
+
+
+def test_scene_type_should_be_used_when_declared() -> None:
+    class TypedArrange(Arrange):
+        class SceneType(Scene):
+            item: dict
+
+        @step("item")
+        def create(self, name: str = "test"):
+            return {"name": name}
+
+    scene = TypedArrange().create().arrange()
+    assert isinstance(scene, TypedArrange.SceneType)
+    assert scene.item == {"name": "test"}
+    assert scene["item"] == {"name": "test"}
+
+
+def test_scene_type_should_not_be_required() -> None:
+    scene = UserArrange().register().arrange()
+    assert isinstance(scene, Scene)
+    assert not isinstance(scene, type) or not hasattr(scene, "SceneType")
+    assert scene.user["email"] == "test@example.com"
