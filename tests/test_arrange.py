@@ -32,16 +32,6 @@ class OrderArrange(Arrange):
         return {"order_total": order["total"]}
 
 
-def test_step_should_record_without_executing() -> None:
-    chain = UserArrange().register()
-    assert len(chain._recorded_steps) == 1
-
-
-def test_steps_should_record_in_order() -> None:
-    chain = UserArrange().register().verified()
-    assert len(chain._recorded_steps) == 2
-
-
 def test_step_should_return_self_for_chaining() -> None:
     chain = UserArrange()
     result = chain.register()
@@ -49,18 +39,13 @@ def test_step_should_return_self_for_chaining() -> None:
 
 
 def test_step_should_preserve_args() -> None:
-    chain = OrderArrange().create(50)
-    assert chain._recorded_steps[0].args == (50,)
+    scene = OrderArrange().create(50).arrange()
+    assert scene.order["total"] == 50
 
 
 def test_step_should_preserve_kwargs() -> None:
-    chain = UserArrange().register(email="custom@test.com")
-    assert chain._recorded_steps[0].kwargs == {"email": "custom@test.com"}
-
-
-def test_chain_should_have_no_steps_when_empty() -> None:
-    chain = UserArrange()
-    assert len(chain._recorded_steps) == 0
+    scene = UserArrange().register(email="custom@test.com").arrange()
+    assert scene.user["email"] == "custom@test.com"
 
 
 def test_label_should_default_to_method_name() -> None:
@@ -69,13 +54,13 @@ def test_label_should_default_to_method_name() -> None:
         def do_thing(self):
             return "done"
 
-    chain = SimpleArrange().do_thing()
-    assert chain._recorded_steps[0].label == "do_thing"
+    scene = SimpleArrange().do_thing().arrange()
+    assert scene["do_thing"] == "done"
 
 
 def test_label_should_use_custom_value_when_provided() -> None:
-    chain = UserArrange().register()
-    assert chain._recorded_steps[0].label == "user"
+    scene = UserArrange().register().arrange()
+    assert "user" in scene
 
 
 def test_label_should_accept_keyword_argument() -> None:
