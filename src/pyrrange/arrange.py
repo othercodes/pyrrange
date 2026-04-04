@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, overload
@@ -40,18 +39,6 @@ def step(label: str) -> Callable[[F], F]: ...  # pragma: no cover
 
 
 def step(fn: F | str | None = None, label: str | None = None) -> F | Callable[[F], F]:  # type: ignore[misc]
-    """Mark a method as a recordable step.
-
-    Usage::
-
-        @step
-        def register(self, previous, email="test@example.com"):
-            ...
-
-        @step("user")
-        def register(self, previous, email="test@example.com"):
-            ...
-    """
     if isinstance(fn, str):
         return _make_step_decorator(fn)
 
@@ -104,22 +91,9 @@ class _ThenRecord:
 
 
 class Arrange:
-    """Base class for test preparation chains.
-
-    Usage::
-
-        class UserArrange(Arrange):
-            @step("user")
-            def register(self, previous, email="test@example.com"):
-                ...
-
-        scene = UserArrange().register().arrange()
-        user = scene["user"]
-    """
-
-    def __init__(self, context: Context | None = None) -> None:
+    def __init__(self) -> None:
         self._recorded_steps: list[_StepRecord | _ThenRecord] = []
-        self.context: Context = context or Context()
+        self.context: Context = Context()
 
     def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
@@ -129,9 +103,6 @@ class Arrange:
         pass
 
     def arrange(self) -> Scene:
-        return self.execute()
-
-    def execute(self) -> Scene:
         total = len(self._recorded_steps)
         for index, record in enumerate(self._recorded_steps, start=1):
             try:
@@ -148,10 +119,3 @@ class Arrange:
                 ) from exc
             self.context.set_result(record.label, result)
         return Scene(self.context, self)
-
-    def copy(self) -> Arrange:
-        return copy.deepcopy(self)
-
-    def bind(self, context: Context) -> Arrange:
-        self.context = context
-        return self
