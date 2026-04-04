@@ -16,7 +16,7 @@ Pyrrange solves this by letting tests declare exactly what state they need throu
 - Fluent, chainable API for test state preparation
 - Operation-based: steps call real use cases, not create DB rows directly
 - Labeled results: access any step's output by name
-- Sub-chain composition for complex entity graphs
+- Automatic dependency injection: step parameters are resolved from context by name
 - Inline steps via `.then()` for ad-hoc logic
 - Teardown support for resource cleanup
 - Framework-agnostic: works with Django, FastAPI, or any Python project
@@ -35,15 +35,15 @@ pip install pyrrange
 
 ### Define an Arrange
 
-Subclass `Arrange` and define `@step` methods. Each step receives the previous step's result as its first argument and returns the next result.
+Subclass `Arrange` and define `@step` methods. Each step declares what it needs via its parameter names — pyrrange injects values from the context automatically.
 
 ```python
 from pyrrange import Arrange, step
 
 
-class UserArrange(Arrange):
+class AccountArrange(Arrange):
     @step("user")
-    def register(self, previous, email="user@example.com", password="secret"):
+    def register(self, email="user@example.com", password="secret"):
         user = register_user(email=email, password=password)
         return user
 
@@ -59,11 +59,41 @@ class UserArrange(Arrange):
         return user
 ```
 
+### How injection works
+
+Parameters are resolved using a simple rule:
+
+- **No default value** + name matches a label in context → **injected automatically**
+- **Has default value** → **uses the default**, never injected (safe from silent overrides)
+- **Caller provides a value** → **caller always wins**
+
+```python
+@step("user")
+def register(self, email="user@example.com"):
+    # `email` has a default → not injected, uses "user@example.com"
+    # Override via chain: .register(email="other@example.com")
+    ...
+
+@step("user")
+def verified(self, user):
+    # `user` has no default → injected from context["user"]
+    ...
+
+@step("checkout")
+def purchase(self, api_client, payment_method, config=None):
+    # `api_client` → injected from context["api_client"]
+    # `payment_method` → injected from context["payment_method"]
+    # `config` has a default → not injected, uses None
+    ...
+```
+
+This means every dependency is **typed in the signature** — your IDE gives autocomplete and your type checker validates usage.
+
 ### Use in tests
 
 ```python
-def test_login(user_arrange):
-    scene = user_arrange.register().arrange()
+def test_login(account_arrange):
+    scene = account_arrange.register().arrange()
     user = scene["user"]
 
     response = client.post("/login", {"email": user.email, "password": "secret"})
@@ -74,13 +104,13 @@ Each test declares only the steps it needs:
 
 ```python
 # Just a registered user
-scene = user_arrange.register().arrange()
+scene = account_arrange.register().arrange()
 
 # Registered and verified
-scene = user_arrange.register().verified().arrange()
+scene = account_arrange.register().verified().arrange()
 
 # Full admin user
-scene = user_arrange.register().verified().as_admin().arrange()
+scene = account_arrange.register().verified().as_admin().arrange()
 ```
 
 ### Labels
@@ -90,7 +120,7 @@ Steps are labeled by default with the method name. Use `@step("label")` to set a
 ```python
 class OrderArrange(Arrange):
     @step("order")
-    def create(self, previous, total=100):
+    def create(self, total=100):
         return create_order(total=total)
 
     @step("order")
@@ -107,16 +137,18 @@ order = scene["order"]
 receipt = scene["receipt"]
 ```
 
+> **Note:** When multiple steps share the same label (like `"order"` above), the label always points to the latest result. Steps that need the value use injection by matching the label name in their parameter list.
+
 ### Inline steps with `.then()`
 
-Use `.then()` to add a step without defining a method. The function receives the previous result as its first argument.
+Use `.then()` to add a step without defining a method. Parameter names are matched against context labels, just like `@step` methods.
 
 ```python
 def create_api_token(user):
     return Token.objects.create(user=user)
 
 scene = (
-    user_arrange
+    account_arrange
         .register()
         .verified()
         .then("token", create_api_token)
@@ -126,103 +158,72 @@ user = scene["user"]
 token = scene["token"]
 ```
 
-Works with lambdas too:
+Works with lambdas too — the parameter name is the injection key:
 
 ```python
 scene = (
-    user_arrange
+    account_arrange
         .register()
         .then("email", lambda user: user.email)
         .arrange()
 )
 ```
 
-### Sub-chain composition
-
-Complex entities get their own Arrange. Parent steps execute sub-chains.
-
-```python
-class PlanArrange(Arrange):
-    @step("plan")
-    def starter(self, previous, price=9.99):
-        return create_plan(previous, tier="starter", price=price)
-
-    @step("plan")
-    def with_addons(self, plan, addons=None):
-        attach_addons(plan, addons or ["support"])
-        return plan
-
-
-class UserArrange(Arrange):
-    @step("user")
-    def register(self, previous, email="user@example.com"):
-        return register_user(email=email)
-
-    @step("user")
-    def with_plan(self, user, plan_chain):
-        from pyrrange import Context
-        sub_ctx = Context()
-        sub_ctx.set_result("_parent", user)
-        plan_scene = plan_chain.bind(sub_ctx).execute()
-        user.plan = plan_scene.result
-        return user
-
-scene = (
-    UserArrange()
-        .register()
-        .with_plan(PlanArrange().starter(price=19.99).with_addons())
-        .arrange()
-)
-```
-
 ### Teardown
 
-Override `teardown` on your Arrange to clean up resources.
+Override `teardown` on your Arrange to clean up resources. This is where you handle cleanup that Django's transaction rollback can't cover — polymorphic model deletion, external service state, file cleanup.
 
 ```python
-class UserArrange(Arrange):
+class AccountArrange(Arrange):
     @step("user")
-    def register(self, previous, email="user@example.com"):
+    def register(self, email="user@example.com"):
         return register_user(email=email)
 
     def teardown(self, scene):
         scene["user"].delete()
 
-scene = user_arrange.register().arrange()
+scene = account_arrange.register().arrange()
 # ... test ...
 scene.teardown()
 ```
 
-### Context dependencies
-
-Inject project-specific dependencies via `Context` for steps that need external resources.
-
-```python
-from pyrrange import Context
-
-@pytest.fixture
-def ctx(db_connection):
-    context = Context()
-    context.set("db", db_connection)
-    return context
-
-class UserArrange(Arrange):
-    @step("user")
-    def register(self, previous, email="user@example.com"):
-        db = self.context.get("db")
-        return db.execute("INSERT INTO users ...")
-
-scene = UserArrange(ctx).register().arrange()
-```
+> **Note:** `teardown()` must be called explicitly. If the test crashes before calling it, cleanup won't happen. Context manager support (`with ... as scene:`) is planned for a future release.
 
 ### Expose arranges as fixtures
 
 ```python
 @pytest.fixture
-def user_arrange():
-    return UserArrange()
+def account_arrange():
+    return AccountArrange()
 
-def test_something(user_arrange):
-    scene = user_arrange.register().verified().arrange()
+def test_something(account_arrange):
+    scene = account_arrange.register().verified().arrange()
     user = scene["user"]
 ```
+
+### Chain shortcuts
+
+For common step combinations, define convenience methods on your Arrange:
+
+```python
+class AccountArrange(Arrange):
+    @step("user")
+    def register(self, email="user@example.com"):
+        ...
+
+    @step("user")
+    def verified(self, user):
+        ...
+
+    @step("api_client")
+    def with_authenticated_client(self, user):
+        ...
+
+    def authenticated(self):
+        return self.register().verified().with_authenticated_client()
+
+# In tests:
+scene = account_arrange.authenticated().arrange()
+```
+
+These are plain Python methods — no framework magic.

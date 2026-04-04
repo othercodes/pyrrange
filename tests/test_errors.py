@@ -8,19 +8,19 @@ from pyrrange.scene import Scene
 
 class FailingArrange(Arrange):
     @step
-    def succeed(self, previous):
+    def succeed(self):
         return "ok"
 
     @step
-    def fail_with_key_error(self, previous):
+    def fail_with_key_error(self):
         return {}["missing"]
 
     @step
-    def fail_with_value_error(self, previous):
+    def fail_with_value_error(self):
         raise ValueError("bad value")
 
     @step
-    def fail_with_step_error(self, previous):
+    def fail_with_step_error(self):
         raise StepError(
             step_name="inner",
             step_index=1,

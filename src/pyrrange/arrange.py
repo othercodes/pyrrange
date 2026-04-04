@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, overload
@@ -64,6 +65,37 @@ def _make_step_decorator(label: str | None) -> Callable[[F], F]:
     return decorator
 
 
+def _resolve_kwargs(
+    fn: Callable[..., Any],
+    context: Context,
+    recorded_args: tuple[Any, ...],
+    recorded_kwargs: dict[str, Any],
+    skip_self: bool,
+) -> dict[str, Any]:
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.values())
+
+    if skip_self and params:
+        params = params[1:]
+
+    resolved: dict[str, Any] = {}
+
+    for param in params:
+        if param.name in recorded_kwargs:
+            continue
+        if param.default is inspect.Parameter.empty and param.name in context:
+            resolved[param.name] = context[param.name]
+
+    unresolved = [p for p in params if p.name not in resolved and p.name not in recorded_kwargs]
+    for i, arg in enumerate(recorded_args):
+        if i < len(unresolved):
+            resolved[unresolved[i].name] = arg
+
+    resolved.update(recorded_kwargs)
+
+    return resolved
+
+
 class _StepRecord:
     __slots__ = ("args", "fn", "kwargs", "label")
 
@@ -73,8 +105,9 @@ class _StepRecord:
         self.args = args
         self.kwargs = kwargs
 
-    def execute(self, arrange: Arrange, previous: Any) -> Any:
-        return self.fn(arrange, previous, *self.args, **self.kwargs)
+    def execute(self, arrange: Arrange) -> Any:
+        kwargs = _resolve_kwargs(self.fn, arrange.context, self.args, self.kwargs, skip_self=True)
+        return self.fn(arrange, **kwargs)
 
 
 class _ThenRecord:
@@ -86,8 +119,9 @@ class _ThenRecord:
         self.args = args
         self.kwargs = kwargs
 
-    def execute(self, _arrange: Arrange, previous: Any) -> Any:
-        return self.fn(previous, *self.args, **self.kwargs)
+    def execute(self, _arrange: Arrange) -> Any:
+        kwargs = _resolve_kwargs(self.fn, _arrange.context, self.args, self.kwargs, skip_self=False)
+        return self.fn(**kwargs)
 
 
 class Arrange:
@@ -106,7 +140,7 @@ class Arrange:
         total = len(self._recorded_steps)
         for index, record in enumerate(self._recorded_steps, start=1):
             try:
-                result = record.execute(self, self.context.result)
+                result = record.execute(self)
             except StepError:
                 raise
             except Exception as exc:

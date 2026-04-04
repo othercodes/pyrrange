@@ -9,7 +9,7 @@ _torn_down_scene = None
 
 class TrackedArrange(Arrange):
     @step
-    def create(self, previous):
+    def create(self):
         return "resource"
 
     def teardown(self, scene: Scene) -> None:
@@ -53,7 +53,7 @@ def test_teardown_should_be_noop_on_base_arrange() -> None:
 
 def test_teardown_should_work_with_then_steps() -> None:
     _reset()
-    scene = TrackedArrange().create().then("extra", lambda prev: prev + "_extra").arrange()
+    scene = TrackedArrange().create().then("extra", lambda create: create + "_extra").arrange()
     scene.teardown()
     assert _torn_down
     assert _torn_down_scene["extra"] == "resource_extra"
