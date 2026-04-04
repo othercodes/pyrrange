@@ -181,13 +181,18 @@ class AccountArrange(Arrange):
 
     def teardown(self, scene):
         scene["user"].delete()
-
-scene = account_arrange.register().arrange()
-# ... test ...
-scene.teardown()
 ```
 
-> **Note:** `teardown()` must be called explicitly. If the test crashes before calling it, cleanup won't happen. Context manager support (`with ... as scene:`) is planned for a future release.
+Use the context manager to guarantee teardown runs, even if the test crashes:
+
+```python
+with account_arrange.register().arrange() as scene:
+    user = scene["user"]
+    # ... test ...
+# teardown runs automatically on exit
+```
+
+You can also call `scene.teardown()` manually if you prefer explicit control.
 
 ### Expose arranges as fixtures
 
