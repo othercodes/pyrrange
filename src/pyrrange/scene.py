@@ -13,10 +13,6 @@ class Scene:
         self._context = context
         self._arrange = arrange
 
-    @property
-    def result(self) -> Any:
-        return self._context.result
-
     def __getitem__(self, label: str) -> Any:
         return self._context[label]
 

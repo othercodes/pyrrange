@@ -6,14 +6,10 @@ from typing import Any
 class Context:
     def __init__(self) -> None:
         self._registry: dict[str, Any] = {}
-        self._result: Any = None
-
-    @property
-    def result(self) -> Any:
-        return self._result
+        self._last_result: Any = None
 
     def set_result(self, label: str, value: Any) -> None:
-        self._result = value
+        self._last_result = value
         self._registry[label] = value
 
     def __getitem__(self, label: str) -> Any:

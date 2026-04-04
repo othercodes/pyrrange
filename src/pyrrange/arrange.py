@@ -106,7 +106,7 @@ class _StepRecord:
         self.kwargs = kwargs
 
     def execute(self, arrange: Arrange) -> Any:
-        kwargs = _resolve_kwargs(self.fn, arrange.context, self.args, self.kwargs, skip_self=True)
+        kwargs = _resolve_kwargs(self.fn, arrange._context, self.args, self.kwargs, skip_self=True)
         return self.fn(arrange, **kwargs)
 
 
@@ -120,14 +120,14 @@ class _ThenRecord:
         self.kwargs = kwargs
 
     def execute(self, _arrange: Arrange) -> Any:
-        kwargs = _resolve_kwargs(self.fn, _arrange.context, self.args, self.kwargs, skip_self=False)
+        kwargs = _resolve_kwargs(self.fn, _arrange._context, self.args, self.kwargs, skip_self=False)
         return self.fn(**kwargs)
 
 
 class Arrange:
     def __init__(self) -> None:
         self._recorded_steps: list[_StepRecord | _ThenRecord] = []
-        self.context: Context = Context()
+        self._context: Context = Context()
 
     def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
@@ -149,7 +149,7 @@ class Arrange:
                     step_index=index,
                     total_steps=total,
                     arrange_class=type(self).__name__,
-                    previous_result=self.context.result,
+                    previous_result=self._context._last_result,
                 ) from exc
-            self.context.set_result(record.label, result)
-        return Scene(self.context, self)
+            self._context.set_result(record.label, result)
+        return Scene(self._context, self)

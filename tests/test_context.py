@@ -5,24 +5,6 @@ import pytest
 from pyrrange.context import Context
 
 
-def test_result_should_be_none_initially() -> None:
-    ctx = Context()
-    assert ctx.result is None
-
-
-def test_result_should_update_after_set_result() -> None:
-    ctx = Context()
-    ctx.set_result("step1", "user_obj")
-    assert ctx.result == "user_obj"
-
-
-def test_result_should_overwrite_previous() -> None:
-    ctx = Context()
-    ctx.set_result("step1", "first")
-    ctx.set_result("step2", "second")
-    assert ctx.result == "second"
-
-
 def test_registry_should_return_value_by_label() -> None:
     ctx = Context()
     ctx.set_result("register", "user_obj")

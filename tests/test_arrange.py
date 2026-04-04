@@ -6,77 +6,76 @@ from pyrrange.arrange import Arrange, StepError, step
 from pyrrange.scene import Scene
 
 
-class CounterArrange(Arrange):
-    @step
-    def add(self, value: int = 1):
-        current = self.context.result or 0
-        return current + value
-
-    @step
-    def multiply(self, factor: int = 2):
-        return self.context.result * factor
-
-    @step
-    def noop(self):
-        return self.context.result
-
-
 class UserArrange(Arrange):
-    @step
+    @step("user")
     def register(self, email: str = "test@example.com"):
         return {"type": "user", "email": email, "verified": False}
 
-    @step
-    def verified(self, register):
-        register["verified"] = True
-        return register
+    @step("user")
+    def verified(self, user):
+        user["verified"] = True
+        return user
+
+
+class OrderArrange(Arrange):
+    @step("order")
+    def create(self, total: int = 100):
+        return {"total": total, "paid": False}
+
+    @step("order")
+    def paid(self, order):
+        order["paid"] = True
+        return order
+
+    @step("receipt")
+    def with_receipt(self, order):
+        return {"order_total": order["total"]}
 
 
 def test_step_should_record_without_executing() -> None:
-    chain = CounterArrange().add(5)
+    chain = UserArrange().register()
     assert len(chain._recorded_steps) == 1
-    assert chain.context.result is None
 
 
 def test_steps_should_record_in_order() -> None:
-    chain = CounterArrange().add(5).multiply(3).noop()
-    assert len(chain._recorded_steps) == 3
+    chain = UserArrange().register().verified()
+    assert len(chain._recorded_steps) == 2
 
 
 def test_step_should_return_self_for_chaining() -> None:
-    chain = CounterArrange()
-    result = chain.add(1)
+    chain = UserArrange()
+    result = chain.register()
     assert result is chain
 
 
 def test_step_should_preserve_args() -> None:
-    chain = CounterArrange().add(42)
-    assert chain._recorded_steps[0].args == (42,)
+    chain = OrderArrange().create(50)
+    assert chain._recorded_steps[0].args == (50,)
 
 
 def test_step_should_preserve_kwargs() -> None:
-    chain = CounterArrange().add(value=42)
-    assert chain._recorded_steps[0].kwargs == {"value": 42}
+    chain = UserArrange().register(email="custom@test.com")
+    assert chain._recorded_steps[0].kwargs == {"email": "custom@test.com"}
 
 
 def test_chain_should_have_no_steps_when_empty() -> None:
-    chain = CounterArrange()
+    chain = UserArrange()
     assert len(chain._recorded_steps) == 0
 
 
 def test_label_should_default_to_method_name() -> None:
-    chain = CounterArrange().add(5)
-    assert chain._recorded_steps[0].label == "add"
-
-
-def test_label_should_use_custom_value_when_provided() -> None:
-    class LabelArrange(Arrange):
-        @step("custom")
+    class SimpleArrange(Arrange):
+        @step
         def do_thing(self):
             return "done"
 
-    chain = LabelArrange().do_thing()
-    assert chain._recorded_steps[0].label == "custom"
+    chain = SimpleArrange().do_thing()
+    assert chain._recorded_steps[0].label == "do_thing"
+
+
+def test_label_should_use_custom_value_when_provided() -> None:
+    chain = UserArrange().register()
+    assert chain._recorded_steps[0].label == "user"
 
 
 def test_label_should_accept_keyword_argument() -> None:
@@ -90,29 +89,20 @@ def test_label_should_accept_keyword_argument() -> None:
 
 
 def test_labels_should_be_accessible_after_arrange() -> None:
-    scene = CounterArrange().add(5).multiply(3).arrange()
-    assert scene["add"] == 5
-    assert scene["multiply"] == 15
+    scene = OrderArrange().create().paid().with_receipt().arrange()
+    assert scene["order"]["paid"] is True
+    assert scene["receipt"]["order_total"] == 100
 
 
 def test_label_should_overwrite_when_same() -> None:
     scene = UserArrange().register().verified().arrange()
-    assert scene["register"]["verified"] is True
-    assert scene["verified"]["verified"] is True
+    assert scene["user"]["verified"] is True
 
 
 def test_step_should_inject_from_context_when_no_default() -> None:
-    class InjectedArrange(Arrange):
-        @step("user")
-        def create_user(self, name: str = "Alice"):
-            return {"name": name}
-
-        @step("greeting")
-        def greet(self, user):
-            return f"Hello, {user['name']}!"
-
-    scene = InjectedArrange().create_user().greet().arrange()
-    assert scene["greeting"] == "Hello, Alice!"
+    scene = UserArrange().register().verified().arrange()
+    assert scene["user"]["verified"] is True
+    assert scene["user"]["email"] == "test@example.com"
 
 
 def test_step_should_not_inject_when_param_has_default() -> None:
@@ -130,17 +120,9 @@ def test_step_should_not_inject_when_param_has_default() -> None:
 
 
 def test_step_should_prefer_caller_kwargs_over_context() -> None:
-    class OverrideArrange(Arrange):
-        @step("user")
-        def create_user(self):
-            return {"name": "Context User"}
-
-        @step("greeting")
-        def greet(self, user):
-            return f"Hello, {user['name']}!"
-
-    scene = OverrideArrange().create_user().greet(user={"name": "Override"}).arrange()
-    assert scene["greeting"] == "Hello, Override!"
+    scene = UserArrange().register().verified(user={"verified": False, "email": "override"}).arrange()
+    assert scene["user"]["verified"] is True
+    assert scene["user"]["email"] == "override"
 
 
 def test_step_should_inject_multiple_params_from_context() -> None:
@@ -161,59 +143,19 @@ def test_step_should_inject_multiple_params_from_context() -> None:
     assert scene["result"] == "client_obj:token_123"
 
 
-def test_arrange_should_run_steps_in_order() -> None:
-    scene = CounterArrange().add(5).multiply(3).arrange()
-    assert scene.result == 15
-
-
 def test_arrange_should_return_scene() -> None:
-    scene = CounterArrange().add(5).arrange()
+    scene = UserArrange().register().arrange()
     assert isinstance(scene, Scene)
-
-
-def test_scene_result_should_be_last_step() -> None:
-    scene = CounterArrange().add(5).multiply(3).arrange()
-    assert scene.result == 15
 
 
 def test_arrange_should_return_scene_when_chain_empty() -> None:
-    scene = CounterArrange().arrange()
+    scene = UserArrange().arrange()
     assert isinstance(scene, Scene)
-    assert scene.result is None
-
-
-def test_noop_should_preserve_result() -> None:
-    scene = CounterArrange().add(7).noop().arrange()
-    assert scene.result == 7
-
-
-def test_first_step_should_not_inject_when_no_context() -> None:
-    class CheckArrange(Arrange):
-        @step
-        def check(self, value: str = "default"):
-            return value
-
-    scene = CheckArrange().check().arrange()
-    assert scene["check"] == "default"
-
-
-def test_second_step_should_receive_injected_value() -> None:
-    class CheckArrange(Arrange):
-        @step("first")
-        def create(self):
-            return "hello"
-
-        @step("second")
-        def transform(self, first):
-            return first.upper()
-
-    scene = CheckArrange().create().transform().arrange()
-    assert scene["second"] == "HELLO"
 
 
 def test_then_should_inject_from_context() -> None:
-    scene = CounterArrange().add(5).then("doubled", lambda add: add * 2).arrange()
-    assert scene["doubled"] == 10
+    scene = UserArrange().register().then("email", lambda user: user["email"]).arrange()
+    assert scene["email"] == "test@example.com"
 
 
 def test_then_should_not_inject_when_param_has_default() -> None:
@@ -222,44 +164,44 @@ def test_then_should_not_inject_when_param_has_default() -> None:
 
 
 def test_then_should_chain_with_steps() -> None:
-    scene = CounterArrange().add(10).then("formatted", lambda add: f"value={add}").arrange()
-    assert scene["add"] == 10
-    assert scene["formatted"] == "value=10"
+    scene = UserArrange().register().then("greeting", lambda user: f"hello {user['email']}").arrange()
+    assert scene["user"]["email"] == "test@example.com"
+    assert scene["greeting"] == "hello test@example.com"
 
 
 def test_then_should_accept_named_function() -> None:
-    def double_it(add):
-        return add * 2
+    def extract_email(user):
+        return user["email"]
 
-    scene = CounterArrange().add(5).then("doubled", double_it).arrange()
-    assert scene["doubled"] == 10
+    scene = UserArrange().register().then("email", extract_email).arrange()
+    assert scene["email"] == "test@example.com"
 
 
 def test_then_should_pass_extra_args() -> None:
-    def multiply(add, factor):
-        return add * factor
+    def format_greeting(user, prefix):
+        return f"{prefix} {user['email']}"
 
-    scene = CounterArrange().add(5).then("result", multiply, 3).arrange()
-    assert scene["result"] == 15
+    scene = UserArrange().register().then("greeting", format_greeting, "Welcome").arrange()
+    assert scene["greeting"] == "Welcome test@example.com"
 
 
 def test_then_should_pass_extra_kwargs() -> None:
-    def multiply(add, factor=2):
-        return add * factor
+    def format_greeting(user, prefix="Hi"):
+        return f"{prefix} {user['email']}"
 
-    scene = CounterArrange().add(5).then("result", multiply, factor=4).arrange()
-    assert scene["result"] == 20
+    scene = UserArrange().register().then("greeting", format_greeting, prefix="Welcome").arrange()
+    assert scene["greeting"] == "Welcome test@example.com"
+
+
+def test_then_should_ignore_extra_positional_args() -> None:
+    scene = UserArrange().register().then("email", lambda user: user["email"], "extra_ignored").arrange()
+    assert scene["email"] == "test@example.com"
 
 
 def test_then_should_return_self_for_chaining() -> None:
     chain = Arrange()
     result = chain.then("x", lambda: None)
     assert result is chain
-
-
-def test_then_should_ignore_extra_positional_args() -> None:
-    scene = CounterArrange().add(5).then("result", lambda add: add * 2, "extra_ignored").arrange()
-    assert scene["result"] == 10
 
 
 def test_then_should_wrap_error_in_step_error() -> None:
@@ -270,12 +212,3 @@ def test_then_should_wrap_error_in_step_error() -> None:
         Arrange().then("fail", bad_fn).arrange()
     assert isinstance(exc_info.value.__cause__, ValueError)
     assert str(exc_info.value.__cause__) == "boom"
-
-
-def test_then_should_create_derived_entity_from_context() -> None:
-    def create_client(register):
-        return {"type": "client", "token": f"token-for-{register['email']}"}
-
-    scene = UserArrange().register(email="test@example.com").verified().then("api_client", create_client).arrange()
-    assert scene["api_client"]["token"] == "token-for-test@example.com"
-    assert scene["verified"]["verified"] is True
