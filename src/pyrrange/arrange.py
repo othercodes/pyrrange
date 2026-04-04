@@ -58,6 +58,7 @@ def _make_step_decorator(label: str | None) -> Callable[[F], F]:
             self._recorded_steps.append(_StepRecord(fn, step_label, args, kwargs))
             return self
 
+        wrapper.__annotations__ = {"return": Arrange}
         wrapper._original = fn  # type: ignore[attr-defined]
         wrapper._step_label = step_label  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
