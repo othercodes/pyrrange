@@ -65,6 +65,36 @@ def test_teardown_should_not_fire_without_explicit_call() -> None:
     assert not _torn_down
 
 
+def test_context_manager_should_call_teardown_on_exit() -> None:
+    _reset()
+    with TrackedArrange().create().arrange() as scene:
+        assert scene["create"] == "resource"
+        assert not _torn_down
+    assert _torn_down
+
+
+def test_context_manager_should_call_teardown_on_exception() -> None:
+    _reset()
+    try:
+        with TrackedArrange().create().arrange():
+            raise RuntimeError("test crash")
+    except RuntimeError:
+        pass
+    assert _torn_down
+
+
+def test_context_manager_should_not_suppress_exceptions() -> None:
+    _reset()
+    caught = False
+    try:
+        with TrackedArrange().create().arrange():
+            raise ValueError("propagate me")
+    except ValueError:
+        caught = True
+    assert caught
+    assert _torn_down
+
+
 def test_scene_should_support_contains_check() -> None:
     scene = TrackedArrange().create().arrange()
     assert "create" in scene

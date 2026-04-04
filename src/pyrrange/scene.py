@@ -22,5 +22,11 @@ class Scene:
     def teardown(self) -> None:
         self._arrange.teardown(self)
 
+    def __enter__(self) -> Scene:
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        self.teardown()
+
     def __repr__(self) -> str:
         return f"Scene({self._context!r})"
