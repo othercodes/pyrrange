@@ -232,23 +232,50 @@ def test_scene_should_support_both_dict_and_attribute_access() -> None:
     assert scene["receipt"] == scene.receipt
 
 
+class _User:
+    def __init__(self, email: str) -> None:
+        self.email = email
+
+
+class _ApiClient:
+    def __init__(self, token: str) -> None:
+        self.token = token
+
+
+class TypedArrange(Arrange):
+    class SceneType(Scene):
+        user: _User
+        api_client: _ApiClient
+
+    @step("user")
+    def register(self, email: str = "test@example.com"):
+        return _User(email=email)
+
+    @step("api_client")
+    def with_client(self, user: _User):
+        return _ApiClient(token=f"token-for-{user.email}")
+
+
 def test_scene_type_should_be_used_when_declared() -> None:
-    class TypedArrange(Arrange):
-        class SceneType(Scene):
-            item: dict
-
-        @step("item")
-        def create(self, name: str = "test"):
-            return {"name": name}
-
-    scene = TypedArrange().create().arrange()
+    scene = TypedArrange().register().with_client().arrange()
     assert isinstance(scene, TypedArrange.SceneType)
-    assert scene.item == {"name": "test"}
-    assert scene["item"] == {"name": "test"}
+
+
+def test_scene_type_values_should_be_typed_instances() -> None:
+    scene = TypedArrange().register().with_client().arrange()
+    assert isinstance(scene.user, _User)
+    assert isinstance(scene.api_client, _ApiClient)
+    assert scene.user.email == "test@example.com"
+    assert scene.api_client.token == "token-for-test@example.com"
+
+
+def test_scene_type_should_support_both_access_patterns() -> None:
+    scene = TypedArrange().register().arrange()
+    assert scene.user is scene["user"]
+    assert isinstance(scene.user, _User)
 
 
 def test_scene_type_should_not_be_required() -> None:
     scene = UserArrange().register().arrange()
     assert isinstance(scene, Scene)
-    assert not isinstance(scene, type) or not hasattr(scene, "SceneType")
     assert scene.user["email"] == "test@example.com"
