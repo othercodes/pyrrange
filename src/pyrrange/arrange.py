@@ -135,7 +135,20 @@ class Arrange:
         return self
 
     def teardown(self, scene: Scene) -> None:
-        pass
+        """Hook for cleaning up resources after a test.
+
+        Override in subclasses to release external state that cannot be
+        rolled back automatically — polymorphic model deletion, external
+        service cleanup, file removal, etc. The base implementation is a
+        no-op so calling ``scene.teardown()`` is always safe.
+
+        Called automatically when a Scene is used as a context manager
+        (``with ... as scene:``), or manually via ``scene.teardown()``.
+
+        :param scene: The Scene produced by ``arrange()``. Use
+            ``scene["label"]`` or ``scene.label`` to access step results
+            that need cleanup.
+        """
 
     def arrange(self) -> Scene:
         total = len(self._recorded_steps)
