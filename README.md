@@ -25,11 +25,18 @@ Pyrrange solves this by letting tests declare exactly what state they need throu
 ## Requirements
 
 - Python 3.10+
+- pytest 7.0+ (optional, for `pyrrange[pytest]`)
 
 ## Installation
 
 ```bash
 pip install pyrrange
+```
+
+With pytest integration:
+
+```bash
+pip install pyrrange[pytest]
 ```
 
 ## Usage
@@ -92,36 +99,123 @@ This means every dependency is **typed in the signature** — your IDE gives aut
 
 ### Use in tests
 
-With context manager (recommended — guarantees teardown):
+Pyrrange supports four consumption patterns. All examples below use the same arrange:
 
 ```python
-def test_login(account_arrange):
-    with account_arrange.register().arrange() as scene:
-        response = client.post("/login", {"email": scene.user.email, "password": "secret"})
-        assert response.status_code == 200
+from pyrrange import Arrange, Scene, step
+
+class AccountArrange(Arrange):
+    class SceneType(Scene):
+        user: User
+        api_client: APIClient
+
+    @step("user")
+    def register(self, email="user@example.com"):
+        return register_user(email=email)
+
+    @step("user")
+    def verified(self, user):
+        verify_email(user)
+        return user
+
+    @step("api_client")
+    def with_client(self, user):
+        return create_authenticated_client(user)
+
+    def teardown(self, scene):
+        scene.user.delete()
 ```
 
-Without context manager:
+#### 1. Direct
+
+Call `.arrange()` and use the scene. Teardown is manual — if the test crashes, cleanup won't run.
 
 ```python
-def test_login(account_arrange):
-    scene = account_arrange.register().arrange()
-    response = client.post("/login", {"email": scene.user.email, "password": "secret"})
+def test_checkout():
+    scene = AccountArrange().register().verified().with_client().arrange()
+    response = scene.api_client.post("/checkout")
     assert response.status_code == 200
     scene.teardown()
 ```
+
+#### 2. Context manager
+
+Wrap in `with` to guarantee teardown runs, even on failure.
+
+```python
+def test_checkout():
+    with AccountArrange().register().verified().with_client().arrange() as scene:
+        response = scene.api_client.post("/checkout")
+        assert response.status_code == 200
+    # teardown runs automatically on exit
+```
+
+#### 3. Scenario fixtures
+
+Install with `pip install pyrrange[pytest]`. Use `scene_fixture` to define reusable scenarios in conftest. Each test gets a fresh clone with automatic teardown.
+
+```python
+# conftest.py
+from pyrrange.pytest import scene_fixture
+
+registered = scene_fixture(AccountArrange().register())
+authenticated = scene_fixture(AccountArrange().register().verified().with_client())
+
+# test.py
+def test_checkout(authenticated):
+    response = authenticated.api_client.post("/checkout")
+    assert response.status_code == 200
+# teardown runs automatically via yield fixture
+```
+
+#### 4. Arrange marker
+
+Install with `pip install pyrrange[pytest]`. Use `@pytest.mark.arrange` to declare a chain and have scene labels injected directly as test parameters — no scene unpacking.
+
+```python
+import pytest
+
+_authenticated = AccountArrange().register().verified().with_client()
+
+@pytest.mark.arrange(_authenticated)
+def test_checkout(user, api_client):
+    response = api_client.post("/checkout")
+    assert response.status_code == 200
+# teardown runs automatically via plugin hook
+```
+
+The marker coexists with regular pytest fixtures:
+
+```python
+@pytest.mark.arrange(_authenticated)
+def test_checkout_logging(user, api_client, mocker):
+    # user, api_client → from scene
+    # mocker → from pytest as usual
+    mock_log = mocker.patch("app.checkout.logger")
+    api_client.post("/checkout")
+    mock_log.info.assert_called_once()
+```
+
+#### Comparison
+
+| Pattern | Teardown | Scene unpacking | Setup |
+|---|---|---|---|
+| Direct | Manual | `scene.label` | None |
+| Context manager | Automatic | `scene.label` | None |
+| Scenario fixtures | Automatic | `scene.label` | `pyrrange[pytest]` |
+| Arrange marker | Automatic | Direct params | `pyrrange[pytest]` |
 
 Each test declares only the steps it needs:
 
 ```python
 # Just a registered user
-scene = account_arrange.register().arrange()
+AccountArrange().register()
 
 # Registered and verified
-scene = account_arrange.register().verified().arrange()
+AccountArrange().register().verified()
 
-# Full admin user
-scene = account_arrange.register().verified().as_admin().arrange()
+# Full authenticated user with API client
+AccountArrange().register().verified().with_client()
 ```
 
 ### Labels
@@ -229,18 +323,6 @@ class AccountArrange(Arrange):
 When `SceneType` is declared, `.arrange()` returns an instance of that subclass. Your IDE sees `scene.user` as `User` and `scene.api_client` as `APIClient`.
 
 `SceneType` is optional — without it, attribute access still works but returns `Any`. Both `scene.user` and `scene["user"]` are always available.
-
-### Expose arranges as fixtures
-
-```python
-@pytest.fixture
-def account_arrange():
-    return AccountArrange()
-
-def test_something(account_arrange):
-    with account_arrange.register().verified().arrange() as scene:
-        user = scene.user
-```
 
 ### Chain shortcuts
 

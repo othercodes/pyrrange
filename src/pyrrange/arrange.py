@@ -130,6 +130,11 @@ class Arrange:
         self._recorded_steps: list[_StepRecord | _ThenRecord] = []
         self._context: Context = Context()
 
+    def clone(self) -> Arrange:
+        new = type(self)()
+        new._recorded_steps = self._recorded_steps.copy()
+        return new
+
     def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
         return self
