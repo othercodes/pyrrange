@@ -264,3 +264,56 @@ def test_scene_type_should_not_be_required() -> None:
     scene = UserArrange().register().arrange()
     assert isinstance(scene, Scene)
     assert scene.user["email"] == "test@example.com"
+
+
+def test_clone_should_return_fresh_instance() -> None:
+    original = UserArrange().register().verified()
+    cloned = original.clone()
+    assert cloned is not original
+
+
+def test_clone_should_preserve_recorded_steps() -> None:
+    original = UserArrange().register().verified()
+    cloned = original.clone()
+    scene = cloned.arrange()
+    assert scene.user["verified"] is True
+    assert scene.user["email"] == "test@example.com"
+
+
+def test_clone_should_have_empty_context() -> None:
+    original = UserArrange().register()
+    original.arrange()
+    cloned = original.clone()
+    scene = cloned.arrange()
+    assert scene.user["email"] == "test@example.com"
+
+
+def test_clone_should_not_share_steps_list() -> None:
+    original = UserArrange().register()
+    cloned = original.clone()
+    original.verified()
+    scene = cloned.arrange()
+    assert scene.user["verified"] is False
+
+
+def test_clone_should_preserve_subclass_type() -> None:
+    original = TypedArrange().register().with_client()
+    cloned = original.clone()
+    assert type(cloned) is TypedArrange
+    scene = cloned.arrange()
+    assert isinstance(scene, TypedArrange.SceneType)
+
+
+def test_clone_should_preserve_then_steps() -> None:
+    original = UserArrange().register().then("email", lambda user: user["email"])
+    cloned = original.clone()
+    scene = cloned.arrange()
+    assert scene["email"] == "test@example.com"
+
+
+def test_clone_should_allow_multiple_independent_executions() -> None:
+    template = UserArrange().register()
+    scene_a = template.clone().arrange()
+    scene_b = template.clone().arrange()
+    assert scene_a.user is not scene_b.user
+    assert scene_a.user["email"] == scene_b.user["email"]
