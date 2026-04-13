@@ -49,13 +49,21 @@ def step(fn: F | str | None = None, label: str | None = None) -> F | Callable[[F
     return _make_step_decorator(None)(fn)
 
 
+def _cache_params(fn: Callable[..., Any], skip_self: bool) -> tuple[inspect.Parameter, ...]:
+    params = tuple(inspect.signature(fn).parameters.values())
+    if skip_self and params:
+        params = params[1:]
+    return params
+
+
 def _make_step_decorator(label: str | None) -> Callable[[F], F]:
     def decorator(fn: F) -> F:
         step_label = label or fn.__name__
+        cached_params = _cache_params(fn, skip_self=True)
 
         @wraps(fn)
         def wrapper(self: Arrange, *args: Any, **kwargs: Any) -> Arrange:
-            self._recorded_steps.append(_StepRecord(fn, step_label, args, kwargs))
+            self._recorded_steps.append(_StepRecord(fn, step_label, args, kwargs, cached_params))
             return self
 
         wrapper.__annotations__ = {"return": Arrange}
@@ -67,18 +75,11 @@ def _make_step_decorator(label: str | None) -> Callable[[F], F]:
 
 
 def _resolve_kwargs(
-    fn: Callable[..., Any],
+    params: tuple[inspect.Parameter, ...],
     context: Context,
     recorded_args: tuple[Any, ...],
     recorded_kwargs: dict[str, Any],
-    skip_self: bool,
 ) -> dict[str, Any]:
-    sig = inspect.signature(fn)
-    params = list(sig.parameters.values())
-
-    if skip_self and params:
-        params = params[1:]
-
     resolved: dict[str, Any] = {}
 
     for param in params:
@@ -98,30 +99,46 @@ def _resolve_kwargs(
 
 
 class _StepRecord:
-    __slots__ = ("args", "fn", "kwargs", "label")
+    __slots__ = ("args", "fn", "kwargs", "label", "params")
 
-    def __init__(self, fn: Callable[..., Any], label: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        fn: Callable[..., Any],
+        label: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        params: tuple[inspect.Parameter, ...],
+    ) -> None:
         self.fn = fn
         self.label = label
         self.args = args
         self.kwargs = kwargs
+        self.params = params
 
     def execute(self, arrange: Arrange) -> Any:
-        kwargs = _resolve_kwargs(self.fn, arrange._context, self.args, self.kwargs, skip_self=True)
+        kwargs = _resolve_kwargs(self.params, arrange._context, self.args, self.kwargs)
         return self.fn(arrange, **kwargs)
 
 
 class _ThenRecord:
-    __slots__ = ("args", "fn", "kwargs", "label")
+    __slots__ = ("args", "fn", "kwargs", "label", "params")
 
-    def __init__(self, fn: Callable[..., Any], label: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        fn: Callable[..., Any],
+        label: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        params: tuple[inspect.Parameter, ...],
+    ) -> None:
         self.fn = fn
         self.label = label
         self.args = args
         self.kwargs = kwargs
+        self.params = params
 
     def execute(self, _arrange: Arrange) -> Any:
-        kwargs = _resolve_kwargs(self.fn, _arrange._context, self.args, self.kwargs, skip_self=False)
+        kwargs = _resolve_kwargs(self.params, _arrange._context, self.args, self.kwargs)
         return self.fn(**kwargs)
 
 
@@ -136,7 +153,7 @@ class Arrange:
         return new
 
     def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
-        self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs))
+        self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs, _cache_params(fn, skip_self=False)))
         return self
 
     def teardown(self, scene: Scene) -> None:
