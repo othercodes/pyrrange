@@ -3,12 +3,13 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, TypeVar, overload
+from typing import Any, Protocol, TypeVar, overload
 
 from pyrrange.context import Context
 from pyrrange.scene import Scene
 
 F = TypeVar("F", bound=Callable[..., Any])
+A = TypeVar("A", bound="Arrange")
 
 
 class StepError(Exception):
@@ -31,15 +32,27 @@ class StepError(Exception):
         )
 
 
-@overload
-def step(fn: F) -> F: ...  # pragma: no cover
+class _StepMethod(Protocol):
+    """A recorded step: takes the step's own arguments, returns the receiver so chains keep its type.
+
+    A decorator cannot express "this signature, minus the injected params, returning Self".
+    ``ParamSpec`` would demand the injected params at the call site — ``.verified()`` would
+    require ``user`` — which defeats injection. A generic ``__get__`` binds to the receiver
+    instead, at the cost of unchecked call arguments.
+    """
+
+    def __get__(self, obj: A, objtype: type[A] | None = None) -> Callable[..., A]: ...  # pragma: no cover
 
 
 @overload
-def step(label: str) -> Callable[[F], F]: ...  # pragma: no cover
+def step(fn: F) -> _StepMethod: ...  # pragma: no cover
 
 
-def step(fn: F | str | None = None, label: str | None = None) -> F | Callable[[F], F]:  # type: ignore[misc]
+@overload
+def step(fn: str) -> Callable[[F], _StepMethod]: ...  # pragma: no cover
+
+
+def step(fn: Any = None, label: str | None = None) -> Any:
     if isinstance(fn, str):
         return _make_step_decorator(fn)
 
@@ -147,12 +160,12 @@ class Arrange:
         self._recorded_steps: list[_StepRecord | _ThenRecord] = []
         self._context: Context = Context()
 
-    def clone(self) -> Arrange:
-        new = type(self)()
+    def clone(self: A) -> A:
+        new: A = type(self)()
         new._recorded_steps = self._recorded_steps.copy()
         return new
 
-    def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
+    def then(self: A, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> A:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs, _cache_params(fn, skip_self=False)))
         return self
 
