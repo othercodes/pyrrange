@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from pyrrange.context import Context
 
 if TYPE_CHECKING:
-    from pyrrange.arrange import Arrange
+    from pyrrange._core import Arrange
 
 
 class Scene:

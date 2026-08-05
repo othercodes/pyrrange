@@ -83,20 +83,38 @@ def _cache_params(fn: Callable[..., Any], skip_self: bool) -> tuple[inspect.Para
     return params
 
 
-def _make_step_decorator(label: str | None) -> Callable[[F], F]:
-    def decorator(fn: F) -> F:
-        step_label = label or fn.__name__
-        cached_params = _cache_params(fn, skip_self=True)
+class _StepDef:
+    """A decorated step, usable as a free function or as a method.
 
-        @wraps(fn)
-        def wrapper(self: Arrange, *args: Any, **kwargs: Any) -> Arrange:
-            self._recorded_steps.append(_StepRecord(fn, step_label, args, kwargs, cached_params))
+    Calling it directly records the call and returns a record for ``arrange()``.
+    Reaching it through an instance records onto that arrange and returns it, so
+    class-based chains keep working while they are migrated away.
+    """
+
+    def __init__(self, fn: Callable[..., Any], label: str | None) -> None:
+        self.fn = fn
+        self.label = label or fn.__name__
+        self.free_params = _cache_params(fn, skip_self=False)
+        self.bound_params = _cache_params(fn, skip_self=True)
+        wraps(fn)(self)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> _ThenRecord:
+        return _ThenRecord(self.fn, self.label, args, kwargs, self.free_params)
+
+    def __get__(self, obj: Arrange | None, objtype: type[Arrange] | None = None) -> Any:
+        if obj is None:
             return self
 
-        wrapper.__annotations__ = {"return": Arrange}
-        wrapper._original = fn  # type: ignore[attr-defined]
-        wrapper._step_label = step_label  # type: ignore[attr-defined]
-        return wrapper  # type: ignore[return-value]
+        def record(*args: Any, **kwargs: Any) -> Arrange:
+            obj._recorded_steps.append(_StepRecord(self.fn, self.label, args, kwargs, self.bound_params))
+            return obj
+
+        return record
+
+
+def _make_step_decorator(label: str | None) -> Callable[[F], F]:
+    def decorator(fn: F) -> F:
+        return _StepDef(fn, label)  # type: ignore[return-value]
 
     return decorator
 
@@ -222,3 +240,9 @@ class Arrange:
             self._context.set_result(record.label, result)
         scene_cls = getattr(type(self), "SceneType", Scene)
         return scene_cls(self._context, self)
+
+
+def arrange(*records: _ThenRecord) -> Scene:
+    plan = Arrange()
+    plan._recorded_steps.extend(records)
+    return plan.arrange()

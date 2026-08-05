@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 import pytest
 
-from pyrrange.arrange import Arrange
+from pyrrange._core import Arrange
 from pyrrange.scene import Scene
 
 _Scope = Literal["session", "package", "module", "class", "function"]
