@@ -1,14 +1,14 @@
 [project]
 name = "pyrrange"
 dynamic = ["version"]
-description = "Expressive, fluent test scenario preparation for Python."
+description = "Typed, composable test scenario preparation for Python."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [
     { name = "Unay Santisteban", email = "usantisteban@othercode.io" }
 ]
-keywords = ["testing", "arrange", "scenarios", "fluent", "pytest"]
+keywords = ["testing", "arrange", "scenarios", "composable", "fixtures", "pytest"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -78,7 +78,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.flake8-bugbear]
 # on_stage() is a sentinel, not shared mutable state, so B008 does not apply.
-extend-immutable-calls = ["pyrrange.on_stage", "pyrrange.arrange.on_stage"]
+extend-immutable-calls = ["pyrrange.on_stage", "pyrrange._core.on_stage"]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]

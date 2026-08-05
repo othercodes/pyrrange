@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 import pytest
 
-from pyrrange.arrange import Arrange
+from pyrrange._core import Record, arrange
 from pyrrange.scene import Scene
 
 _Scope = Literal["session", "package", "module", "class", "function"]
@@ -13,20 +14,29 @@ _scene_key = pytest.StashKey[Scene]()
 
 
 def scene_fixture(
-    chain: Arrange,
+    *records: Record,
     scope: _Scope = "function",
+    scene: type[Scene] = Scene,
+    teardown: Callable[[Scene], None] | None = None,
 ) -> Any:
+    """Build a pytest fixture that arranges the given steps and tears them down afterwards.
+
+    Scopes wider than ``"function"`` share one scene across tests and run teardown when
+    the scope closes — long after a per-test DB transaction has been rolled back. Only
+    widen the scope for state that outlives a transaction.
+    """
+
     @pytest.fixture(scope=scope)
     def _fixture() -> Any:
-        with chain.clone().arrange() as scene:
-            yield scene
+        with arrange(*records, scene=scene, teardown=teardown) as built:
+            yield built
 
     return _fixture
 
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
-        "markers", "arrange(chain): execute an arrange chain and inject scene labels as test params"
+        "markers", "arrange(*steps, scene=..., teardown=...): run steps and inject scene labels as test params"
     )
 
 
@@ -36,10 +46,11 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if marker is None:
         return
 
-    chain: Arrange = marker.args[0]
-    scene = chain.clone().arrange()
+    scene = arrange(*marker.args, **marker.kwargs)
     item.stash[_scene_key] = scene
 
+    # tryfirst: filling funcargs before pytest resolves fixtures is what lets a scene
+    # label satisfy a test parameter that has no fixture behind it at all.
     for name in getattr(item, "fixturenames", []):
         if name in scene:
             item.funcargs[name] = scene[name]  # type: ignore[attr-defined]

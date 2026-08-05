@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import Any
 
 from pyrrange.context import Context
 
-if TYPE_CHECKING:
-    from pyrrange.arrange import Arrange
-
 
 class Scene:
-    def __init__(self, context: Context, arrange: Arrange) -> None:
+    def __init__(self, context: Context, teardown: Callable[[Scene], None] | None = None) -> None:
         self._context = context
-        self._arrange = arrange
+        self._teardown = teardown
 
     def __getitem__(self, label: str) -> Any:
         return self._context[label]
@@ -26,7 +24,8 @@ class Scene:
         return label in self._context
 
     def teardown(self) -> None:
-        self._arrange.teardown(self)
+        if self._teardown is not None:
+            self._teardown(self)
 
     def __enter__(self) -> Scene:
         return self

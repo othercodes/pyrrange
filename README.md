@@ -3,24 +3,24 @@
 [![Build Status](https://github.com/othercodes/pyrrange/actions/workflows/test.yml/badge.svg)](https://github.com/othercodes/pyrrange/actions/workflows/test.yml)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=othercodes_pyrrange&metric=coverage)](https://sonarcloud.io/summary/new_code?id=othercodes_pyrrange)
 
-Expressive, fluent test scenario preparation for Python.
+Typed, composable test scenario preparation for Python.
 
 ## Why
 
 In large codebases, the arrange phase of tests becomes the bottleneck. Fixtures are one-size-fits-all — the same `user` fixture creates a full object graph whether the test needs a simple login check or a complete checkout flow. Tests pay for setup they don't need, and there's no way to declare "give me just enough state for *this* test."
 
-Pyrrange solves this by letting tests declare exactly what state they need through a fluent chain of operations. Each step calls a real domain operation (not a factory), so the state is built the same way production builds it.
+Pyrrange lets each test declare exactly the state it needs by composing small steps. Each step calls a real domain operation (not a factory), so the state is built the same way production builds it.
 
 ## Features
 
-- Fluent, chainable API for test state preparation
-- Operation-based: steps call real use cases, not create DB rows directly
-- Labeled results: access any step's output by name via attribute or dict access
-- Automatic dependency injection: step parameters are resolved from context by name
-- Optional typed scenes: declare a `SceneType` for full IDE autocomplete and type checking
-- Inline steps via `.then()` for ad-hoc logic
-- Teardown support with context manager for guaranteed cleanup
-- Framework-agnostic: works with Django, FastAPI, or any Python project
+- Steps are plain functions — no base class, no inheritance
+- Operation-based: steps call real use cases, they don't create DB rows directly
+- Labeled results: reach any step's output by name, via attribute or key
+- Dependency injection: mark a parameter with `on_stage()` and it comes from the scene
+- Fully typed: your checker validates step arguments *and* resolves scene labels to their real types
+- Inline steps via `then()` for one-off logic
+- Teardown with a context manager for guaranteed cleanup
+- Framework-agnostic: Django, FastAPI, or any Python project
 
 ## Requirements
 
@@ -41,57 +41,63 @@ pip install pyrrange[pytest]
 
 ## Usage
 
-### Define an Arrange
+### Define steps
 
-Subclass `Arrange` and define `@step` methods. Each step declares what it needs via its parameter names — pyrrange injects values from the context automatically.
+A step is a function decorated with `@step("label")`. Calling it doesn't run it — it records the call, so you can compose steps before anything executes.
 
 ```python
-from pyrrange import Arrange, on_stage, step
+from pyrrange import on_stage, step
+
+from app.accounts.models import User
+from app.accounts.services import register_user, verify_email
 
 
-class AccountArrange(Arrange):
-    @step("user")
-    def register(self, email="user@example.com", password="secret"):
-        user = register_user(email=email, password=password)
-        return user
+@step("user")
+def registered(email: str = "user@example.com", password: str = "secret") -> User:
+    return register_user(email=email, password=password)
 
-    @step("user")
-    def verified(self, user: User = on_stage()):
-        verify_email(user)
-        return user
 
-    @step("user")
-    def as_admin(self, user: User = on_stage()):
-        user.is_admin = True
-        user.save()
-        return user
+@step("user")
+def verified(user: User = on_stage()) -> User:
+    verify_email(user)
+    return user
+```
+
+Steps live wherever you want — one module per domain concept works well. They're imported like any other function, so *go to definition* works and there's no inheritance to trace.
+
+### Run them
+
+`arrange()` runs the recorded steps in order and returns the resulting scene:
+
+```python
+from pyrrange import arrange
+
+
+def test_verified_user_can_log_in():
+    scene = arrange(registered(), verified())
+
+    assert scene.user.is_verified
 ```
 
 ### How injection works
 
-Mark a parameter with `on_stage()` and pyrrange fills it from the scene being built, using the
-parameter's own name as the label:
+Mark a parameter with `on_stage()` and pyrrange fills it from the scene being built, using the parameter's own name as the label:
 
 ```python
 @step("user")
-def register(self, email: str = "user@example.com") -> User:
+def registered(email: str = "user@example.com") -> User:
     # plain default → used as-is, never injected
-    # override via chain: .register(email="other@example.com")
+    # override at the call site: registered(email="other@example.com")
     ...
 
-@step("user")
-def verified(self, user: User = on_stage()) -> User:
-    # on_stage() → injected from the "user" label
-    ...
 
 @step("checkout")
 def purchase(
-    self,
     api_client: Client = on_stage(),
     payment_method: Card = on_stage(),
     config: Config | None = None,
 ) -> Receipt:
-    # api_client, payment_method → injected
+    # api_client, payment_method → injected from the scene
     # config → plain default, uses None
     ...
 ```
@@ -100,30 +106,27 @@ Pass a label when it differs from the parameter name:
 
 ```python
 @step("token")
-def with_token(self, owner: User = on_stage("user")) -> Token:
+def api_token(owner: User = on_stage("user")) -> Token:
     # reads the "user" label into a parameter called `owner`
     ...
 ```
 
 The rules:
 
-- **`on_stage()`** → injected from the scene; raises if the label is not there yet
+- **`on_stage()`** → injected from the scene; raises if the label isn't there yet
 - **Plain default** → used as-is, never injected
 - **Caller passes a keyword argument** → caller wins, even over `on_stage()`
 
-`on_stage()` looks like an ordinary default to a type checker, so the parameter is optional at
-the call site *and* your remaining arguments keep being checked:
+Because `on_stage()` looks like an ordinary default, the parameter is optional at the call site *and* your remaining arguments keep being checked:
 
 ```python
-AccountArrange().register().verified()        # ok — you never pass `user` yourself
-AccountArrange().register(emial="x")          # error: did you mean "email"?
-AccountArrange().register(email=123)          # error: expected "str"
-AccountArrange().register().verified(user=1)  # error: expected "User"
+arrange(registered(), verified())     # ok — you never pass `user` yourself
+registered(emial="x")                 # error: did you mean "email"?
+registered(email=123)                 # error: expected "str"
+verified(user=1)                      # error: expected "User"
 ```
 
-> **Note:** a parameter with no default at all is still injected by name, so pre-`on_stage()`
-> arranges keep running unchanged. Type checkers cannot tell that form apart from a required
-> argument, though, and will ask you to pass it. Add `on_stage()` to silence them.
+> **Note:** a parameter with no default at all is also injected by name. It works, but a type checker can't tell that form apart from a required argument and will ask you to pass it — use `on_stage()`.
 
 > **Using ruff?** `on_stage()` is a sentinel, not shared mutable state, so exempt it from `B008`:
 > ```toml
@@ -131,43 +134,74 @@ AccountArrange().register().verified(user=1)  # error: expected "User"
 > extend-immutable-calls = ["pyrrange.on_stage"]
 > ```
 
-### Use in tests
+### Reusing a plan
 
-Pyrrange supports four consumption patterns. All examples below use the same arrange:
+Steps are recorded, so a chain is just a tuple. Declare it once and run it as many times as you like — each run is independent:
 
 ```python
-from pyrrange import Arrange, Scene, on_stage, step
+PAYING_CUSTOMER = (registered(), verified(), with_card(), authenticated())
 
-class AccountArrange(Arrange):
-    class SceneType(Scene):
-        user: User
-        api_client: APIClient
 
-    @step("user")
-    def register(self, email="user@example.com"):
-        return register_user(email=email)
+def test_checkout():
+    scene = arrange(*PAYING_CUSTOMER)
+```
 
-    @step("user")
-    def verified(self, user: User = on_stage()):
-        verify_email(user)
-        return user
+A shortcut is a function that returns a tuple:
 
-    @step("api_client")
-    def with_client(self, user: User = on_stage()):
-        return create_authenticated_client(user)
+```python
+def paying_customer(brand: str = "visa"):
+    return registered(), verified(), with_card(brand=brand), authenticated()
 
-    def teardown(self, scene):
-        scene.user.delete()
+
+def test_checkout_with_amex():
+    scene = arrange(*paying_customer(brand="amex"))
+```
+
+No cloning, no shared state: the same records can be reused across tests and modules.
+
+### Use in tests
+
+Pyrrange supports four consumption patterns. All examples below use these steps:
+
+```python
+from pyrrange import Scene, arrange, on_stage, step
+
+
+class AccountScene(Scene):
+    user: User
+    api_client: APIClient
+
+
+@step("user")
+def registered(email: str = "user@example.com") -> User:
+    return register_user(email=email)
+
+
+@step("user")
+def verified(user: User = on_stage()) -> User:
+    verify_email(user)
+    return user
+
+
+@step("api_client")
+def authenticated(user: User = on_stage()) -> APIClient:
+    return create_authenticated_client(user)
+
+
+def delete_account(scene: AccountScene) -> None:
+    scene.user.delete()
 ```
 
 #### 1. Direct
 
-Call `.arrange()` and use the scene. Teardown is manual — if the test crashes, cleanup won't run.
+Call `arrange()` and use the scene. Teardown is manual — if the test crashes, cleanup won't run.
 
 ```python
 def test_checkout():
-    scene = AccountArrange().register().verified().with_client().arrange()
+    scene = arrange(registered(), verified(), authenticated())
+
     response = scene.api_client.post("/checkout")
+
     assert response.status_code == 200
     scene.teardown()
 ```
@@ -178,7 +212,7 @@ Wrap in `with` to guarantee teardown runs, even on failure.
 
 ```python
 def test_checkout():
-    with AccountArrange().register().verified().with_client().arrange() as scene:
+    with arrange(registered(), verified(), authenticated(), teardown=delete_account) as scene:
         response = scene.api_client.post("/checkout")
         assert response.status_code == 200
     # teardown runs automatically on exit
@@ -186,42 +220,45 @@ def test_checkout():
 
 #### 3. Scenario fixtures
 
-Install with `pip install pyrrange[pytest]`. Use `scene_fixture` to define reusable scenarios in conftest. Each test gets a fresh clone with automatic teardown.
+Install with `pip install pyrrange[pytest]`. Use `scene_fixture` to define reusable scenarios in conftest. Each test gets a fresh scene with automatic teardown.
 
 ```python
 # conftest.py
 from pyrrange.pytest import scene_fixture
 
-registered = scene_fixture(AccountArrange().register())
-authenticated = scene_fixture(AccountArrange().register().verified().with_client())
+registered_user = scene_fixture(registered())
+authenticated_user = scene_fixture(registered(), verified(), authenticated(), teardown=delete_account)
 
 # test.py
-def test_checkout(authenticated):
-    response = authenticated.api_client.post("/checkout")
+def test_checkout(authenticated_user):
+    response = authenticated_user.api_client.post("/checkout")
     assert response.status_code == 200
 # teardown runs automatically via yield fixture
 ```
 
 #### 4. Arrange marker
 
-Install with `pip install pyrrange[pytest]`. Use `@pytest.mark.arrange` to declare a chain and have scene labels injected directly as test parameters — no scene unpacking.
+Install with `pip install pyrrange[pytest]`. Use `@pytest.mark.arrange` to declare the steps and have scene labels injected directly as test parameters — no scene unpacking.
 
 ```python
 import pytest
 
-_authenticated = AccountArrange().register().verified().with_client()
+AUTHENTICATED = (registered(), verified(), authenticated())
 
-@pytest.mark.arrange(_authenticated)
+
+@pytest.mark.arrange(*AUTHENTICATED)
 def test_checkout(user, api_client):
     response = api_client.post("/checkout")
     assert response.status_code == 200
 # teardown runs automatically via plugin hook
 ```
 
+If a scene label collides with a fixture of the same name, the scene value wins.
+
 The marker coexists with regular pytest fixtures:
 
 ```python
-@pytest.mark.arrange(_authenticated)
+@pytest.mark.arrange(*AUTHENTICATED)
 def test_checkout_logging(user, api_client, mocker):
     # user, api_client → from scene
     # mocker → from pytest as usual
@@ -242,145 +279,113 @@ def test_checkout_logging(user, api_client, mocker):
 Each test declares only the steps it needs:
 
 ```python
-# Just a registered user
-AccountArrange().register()
-
-# Registered and verified
-AccountArrange().register().verified()
-
-# Full authenticated user with API client
-AccountArrange().register().verified().with_client()
+arrange(registered())                                    # just a registered user
+arrange(registered(), verified())                        # registered and verified
+arrange(registered(), verified(), authenticated())       # plus an API client
 ```
 
 ### Labels
 
-Steps are labeled by default with the method name. Use `@step("label")` to set a custom label. Same label overwrites (latest wins).
+Steps are labeled by default with the function name. Use `@step("label")` to set a custom one. The same label overwrites — latest wins.
 
 ```python
-class OrderArrange(Arrange):
-    @step("order")
-    def create(self, total=100):
-        return create_order(total=total)
+@step("order")
+def created(total: int = 100) -> Order:
+    return create_order(total=total)
 
-    @step("order")
-    def paid(self, order: Order = on_stage()):
-        process_payment(order)
-        return order
 
-    @step("receipt")
-    def with_receipt(self, order: Order = on_stage()):
-        return generate_receipt(order)
+@step("order")
+def paid(order: Order = on_stage()) -> Order:
+    process_payment(order)
+    return order
 
-scene = OrderArrange().create().paid().with_receipt().arrange()
-order = scene.order
+
+@step("receipt")
+def with_receipt(order: Order = on_stage()) -> Receipt:
+    return generate_receipt(order)
+
+
+scene = arrange(created(), paid(), with_receipt())
+order = scene.order        # the paid one — latest wins
 receipt = scene.receipt
 ```
 
-> **Note:** When multiple steps share the same label (like `"order"` above), the label always points to the latest result. Steps that need the value use injection by matching the label name in their parameter list.
+### Inline steps with `then()`
 
-### Inline steps with `.then()`
-
-Use `.then()` to add a step without defining a method. Parameter names are matched against context labels, just like `@step` methods.
+Use `then()` for logic that isn't worth naming with `@step`. Parameters resolve exactly the same way.
 
 ```python
-def create_api_token(user):
+from pyrrange import then
+
+
+def create_api_token(user: User = on_stage()) -> Token:
     return Token.objects.create(user=user)
 
-scene = (
-    account_arrange
-        .register()
-        .verified()
-        .then("token", create_api_token)
-        .arrange()
+
+scene = arrange(
+    registered(),
+    verified(),
+    then("token", create_api_token),
 )
-user = scene.user
-token = scene.token
 ```
 
-Works with lambdas too — the parameter name is the injection key:
+Works with lambdas too:
 
 ```python
-scene = (
-    account_arrange
-        .register()
-        .then("email", lambda user: user.email)
-        .arrange()
+scene = arrange(
+    registered(),
+    then("email", lambda user=on_stage(): user.email),
 )
 ```
 
 ### Teardown
 
-Override `teardown` on your Arrange to clean up resources. This is where you handle cleanup that Django's transaction rollback can't cover — polymorphic model deletion, external service state, file cleanup.
+Pass `teardown` to clean up resources after a test. This is where you handle what a transaction rollback can't cover — polymorphic model deletion, external service state, file cleanup.
 
 ```python
-class AccountArrange(Arrange):
-    @step("user")
-    def register(self, email="user@example.com"):
-        return register_user(email=email)
+def delete_account(scene: AccountScene) -> None:
+    scene.user.delete()
 
-    def teardown(self, scene):
-        scene.user.delete()
-```
 
-Use the context manager to guarantee teardown runs, even if the test crashes:
-
-```python
-with account_arrange.register().arrange() as scene:
-    user = scene.user
-    # ... test ...
+with arrange(registered(), teardown=delete_account) as scene:
+    ...
 # teardown runs automatically on exit
 ```
 
-You can also call `scene.teardown()` manually if you prefer explicit control.
+You can also call `scene.teardown()` manually if you prefer explicit control. Without a `teardown` argument it's a no-op, so calling it is always safe.
 
-### Typed Scene
+### Typed scenes
 
-By default, `scene.user` returns `Any`. For full IDE autocomplete and type checking, declare a `SceneType` on your Arrange:
-
-```python
-from pyrrange import Arrange, Scene, on_stage, step
-
-class AccountArrange(Arrange):
-    class SceneType(Scene):
-        user: User
-        api_client: APIClient
-
-    @step("user")
-    def register(self, email="user@example.com") -> User:
-        return register_user(email=email)
-
-    @step("api_client")
-    def with_client(self, user: User = on_stage()) -> APIClient:
-        return create_client(user)
-```
-
-When `SceneType` is declared, `.arrange()` returns an instance of that subclass. Your IDE sees `scene.user` as `User` and `scene.api_client` as `APIClient`.
-
-`SceneType` is optional — without it, attribute access still works but returns `Any`. Both `scene.user` and `scene["user"]` are always available.
-
-### Chain shortcuts
-
-For common step combinations, define convenience methods on your Arrange:
+By default `scene.user` returns `Any`. Declare a `Scene` subclass and pass it to `arrange()` for full IDE autocomplete and type checking:
 
 ```python
-class AccountArrange(Arrange):
-    @step("user")
-    def register(self, email="user@example.com"):
-        ...
+from pyrrange import Scene, arrange, on_stage, step
 
-    @step("user")
-    def verified(self, user: User = on_stage()):
-        ...
 
-    @step("api_client")
-    def with_authenticated_client(self, user: User = on_stage()):
-        ...
+class AccountScene(Scene):
+    user: User
+    api_client: APIClient
 
-    def authenticated(self):
-        return self.register().verified().with_authenticated_client()
 
-# In tests:
-scene = account_arrange.authenticated().arrange()
+scene = arrange(registered(), authenticated(), scene=AccountScene)
+
+scene.user          # User
+scene.api_client    # APIClient
 ```
 
-These are plain Python methods — no framework magic.
+`scene_fixture` takes it too:
+
+```python
+authenticated_user = scene_fixture(registered(), authenticated(), scene=AccountScene)
+```
+
+It's optional — without it, attribute access still works but returns `Any`. Both `scene.user` and `scene["user"]` are always available.
+
+### When a step fails
+
+A failing step raises `StepError` with the position in the plan, the module the step came from, and the previous result, chaining the original exception as `__cause__`:
+
+```
+StepError: Step 2/3 'verified' failed in tests.arranges.accounts
+  Previous result: <User: user@example.com>
+```
