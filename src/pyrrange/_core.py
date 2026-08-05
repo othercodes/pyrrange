@@ -238,11 +238,28 @@ class Arrange:
                     previous_result=self._context._last_result,
                 ) from exc
             self._context.set_result(record.label, result)
-        scene_cls = getattr(type(self), "SceneType", Scene)
+        scene_cls = getattr(self, "SceneType", Scene)
         return scene_cls(self._context, self)
 
 
-def arrange(*records: _ThenRecord) -> Scene:
+def then(label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> _ThenRecord:
+    """Record a one-off callable as a step, for logic not worth naming with @step."""
+    return _ThenRecord(fn, label, args, kwargs, _cache_params(fn, skip_self=False))
+
+
+def arrange(
+    *records: _ThenRecord,
+    scene: type[Scene] = Scene,
+    teardown: Callable[[Scene], None] | None = None,
+) -> Scene:
+    """Run the recorded steps in order and return the resulting scene.
+
+    :param scene: Scene subclass to build, declaring the labels for a type checker.
+    :param teardown: Called with the scene on ``teardown()`` or on leaving a ``with``.
+    """
     plan = Arrange()
     plan._recorded_steps.extend(records)
+    if teardown is not None:
+        plan.teardown = teardown  # type: ignore[method-assign]
+    plan.SceneType = scene  # type: ignore[attr-defined]
     return plan.arrange()
