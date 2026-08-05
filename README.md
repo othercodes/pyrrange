@@ -46,7 +46,7 @@ pip install pyrrange[pytest]
 Subclass `Arrange` and define `@step` methods. Each step declares what it needs via its parameter names — pyrrange injects values from the context automatically.
 
 ```python
-from pyrrange import Arrange, step
+from pyrrange import Arrange, on_stage, step
 
 
 class AccountArrange(Arrange):
@@ -56,12 +56,12 @@ class AccountArrange(Arrange):
         return user
 
     @step("user")
-    def verified(self, user):
+    def verified(self, user: User = on_stage()):
         verify_email(user)
         return user
 
     @step("user")
-    def as_admin(self, user):
+    def as_admin(self, user: User = on_stage()):
         user.is_admin = True
         user.save()
         return user
@@ -69,40 +69,74 @@ class AccountArrange(Arrange):
 
 ### How injection works
 
-Parameters are resolved using a simple rule:
-
-- **No default value** + name matches a label in context → **injected automatically**
-- **Has default value** → **uses the default**, never injected (safe from silent overrides)
-- **Caller provides a value** → **caller always wins**
+Mark a parameter with `on_stage()` and pyrrange fills it from the scene being built, using the
+parameter's own name as the label:
 
 ```python
 @step("user")
-def register(self, email="user@example.com"):
-    # `email` has a default → not injected, uses "user@example.com"
-    # Override via chain: .register(email="other@example.com")
+def register(self, email: str = "user@example.com") -> User:
+    # plain default → used as-is, never injected
+    # override via chain: .register(email="other@example.com")
     ...
 
 @step("user")
-def verified(self, user):
-    # `user` has no default → injected from context["user"]
+def verified(self, user: User = on_stage()) -> User:
+    # on_stage() → injected from the "user" label
     ...
 
 @step("checkout")
-def purchase(self, api_client, payment_method, config=None):
-    # `api_client` → injected from context["api_client"]
-    # `payment_method` → injected from context["payment_method"]
-    # `config` has a default → not injected, uses None
+def purchase(
+    self,
+    api_client: Client = on_stage(),
+    payment_method: Card = on_stage(),
+    config: Config | None = None,
+) -> Receipt:
+    # api_client, payment_method → injected
+    # config → plain default, uses None
     ...
 ```
 
-This means every dependency is **typed in the signature** — your IDE gives autocomplete and your type checker validates usage.
+Pass a label when it differs from the parameter name:
+
+```python
+@step("token")
+def with_token(self, owner: User = on_stage("user")) -> Token:
+    # reads the "user" label into a parameter called `owner`
+    ...
+```
+
+The rules:
+
+- **`on_stage()`** → injected from the scene; raises if the label is not there yet
+- **Plain default** → used as-is, never injected
+- **Caller passes a keyword argument** → caller wins, even over `on_stage()`
+
+`on_stage()` looks like an ordinary default to a type checker, so the parameter is optional at
+the call site *and* your remaining arguments keep being checked:
+
+```python
+AccountArrange().register().verified()        # ok — you never pass `user` yourself
+AccountArrange().register(emial="x")          # error: did you mean "email"?
+AccountArrange().register(email=123)          # error: expected "str"
+AccountArrange().register().verified(user=1)  # error: expected "User"
+```
+
+> **Note:** a parameter with no default at all is still injected by name, so pre-`on_stage()`
+> arranges keep running unchanged. Type checkers cannot tell that form apart from a required
+> argument, though, and will ask you to pass it. Add `on_stage()` to silence them.
+
+> **Using ruff?** `on_stage()` is a sentinel, not shared mutable state, so exempt it from `B008`:
+> ```toml
+> [tool.ruff.lint.flake8-bugbear]
+> extend-immutable-calls = ["pyrrange.on_stage"]
+> ```
 
 ### Use in tests
 
 Pyrrange supports four consumption patterns. All examples below use the same arrange:
 
 ```python
-from pyrrange import Arrange, Scene, step
+from pyrrange import Arrange, Scene, on_stage, step
 
 class AccountArrange(Arrange):
     class SceneType(Scene):
@@ -114,12 +148,12 @@ class AccountArrange(Arrange):
         return register_user(email=email)
 
     @step("user")
-    def verified(self, user):
+    def verified(self, user: User = on_stage()):
         verify_email(user)
         return user
 
     @step("api_client")
-    def with_client(self, user):
+    def with_client(self, user: User = on_stage()):
         return create_authenticated_client(user)
 
     def teardown(self, scene):
@@ -229,12 +263,12 @@ class OrderArrange(Arrange):
         return create_order(total=total)
 
     @step("order")
-    def paid(self, order):
+    def paid(self, order: Order = on_stage()):
         process_payment(order)
         return order
 
     @step("receipt")
-    def with_receipt(self, order):
+    def with_receipt(self, order: Order = on_stage()):
         return generate_receipt(order)
 
 scene = OrderArrange().create().paid().with_receipt().arrange()
@@ -304,7 +338,7 @@ You can also call `scene.teardown()` manually if you prefer explicit control.
 By default, `scene.user` returns `Any`. For full IDE autocomplete and type checking, declare a `SceneType` on your Arrange:
 
 ```python
-from pyrrange import Arrange, Scene, step
+from pyrrange import Arrange, Scene, on_stage, step
 
 class AccountArrange(Arrange):
     class SceneType(Scene):
@@ -316,7 +350,7 @@ class AccountArrange(Arrange):
         return register_user(email=email)
 
     @step("api_client")
-    def with_client(self, user: User) -> APIClient:
+    def with_client(self, user: User = on_stage()) -> APIClient:
         return create_client(user)
 ```
 
@@ -335,11 +369,11 @@ class AccountArrange(Arrange):
         ...
 
     @step("user")
-    def verified(self, user):
+    def verified(self, user: User = on_stage()):
         ...
 
     @step("api_client")
-    def with_authenticated_client(self, user):
+    def with_authenticated_client(self, user: User = on_stage()):
         ...
 
     def authenticated(self):

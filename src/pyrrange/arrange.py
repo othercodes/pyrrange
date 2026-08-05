@@ -3,12 +3,37 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, TypeVar, overload
+from typing import Any, Concatenate, ParamSpec, TypeVar, overload
 
 from pyrrange.context import Context
 from pyrrange.scene import Scene
 
 F = TypeVar("F", bound=Callable[..., Any])
+A = TypeVar("A", bound="Arrange")
+P = ParamSpec("P")
+
+
+class _OnStage:
+    __slots__ = ("label",)
+
+    def __init__(self, label: str | None) -> None:
+        self.label = label
+
+    def __repr__(self) -> str:
+        return f"on_stage({self.label!r})" if self.label else "on_stage()"
+
+
+def on_stage(label: str | None = None) -> Any:
+    """Mark a step parameter as already in the scene, to be injected when the step runs.
+
+    A type checker sees an ordinary default, so the parameter is optional at the call
+    site and the remaining arguments keep being checked. At runtime the default is this
+    sentinel, so the value is taken from the scene being built instead.
+
+    :param label: Scene label to read. Defaults to the parameter's own name, which is
+        what you want unless the label and the parameter need different names.
+    """
+    return _OnStage(label)
 
 
 class StepError(Exception):
@@ -32,14 +57,16 @@ class StepError(Exception):
 
 
 @overload
-def step(fn: F) -> F: ...  # pragma: no cover
+def step(fn: Callable[Concatenate[A, P], object]) -> Callable[Concatenate[A, P], A]: ...  # pragma: no cover
 
 
 @overload
-def step(label: str) -> Callable[[F], F]: ...  # pragma: no cover
+def step(
+    fn: str,
+) -> Callable[[Callable[Concatenate[A, P], object]], Callable[Concatenate[A, P], A]]: ...  # pragma: no cover
 
 
-def step(fn: F | str | None = None, label: str | None = None) -> F | Callable[[F], F]:  # type: ignore[misc]
+def step(fn: Any = None, label: str | None = None) -> Any:
     if isinstance(fn, str):
         return _make_step_decorator(fn)
 
@@ -84,6 +111,11 @@ def _resolve_kwargs(
 
     for param in params:
         if param.name in recorded_kwargs:
+            continue
+        if isinstance(param.default, _OnStage):
+            # Declaring on_stage() asserts the label is there; a missing one is a
+            # programming error, so let Context raise and list what is available.
+            resolved[param.name] = context[param.default.label or param.name]
             continue
         if param.default is inspect.Parameter.empty and param.name in context:
             resolved[param.name] = context[param.name]
@@ -147,12 +179,12 @@ class Arrange:
         self._recorded_steps: list[_StepRecord | _ThenRecord] = []
         self._context: Context = Context()
 
-    def clone(self) -> Arrange:
-        new = type(self)()
+    def clone(self: A) -> A:
+        new: A = type(self)()
         new._recorded_steps = self._recorded_steps.copy()
         return new
 
-    def then(self, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Arrange:
+    def then(self: A, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> A:
         self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs, _cache_params(fn, skip_self=False)))
         return self
 
