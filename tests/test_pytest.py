@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyrrange.arrange import Arrange, step
+from pyrrange._core import Arrange, step
 from pyrrange.pytest import scene_fixture
 from pyrrange.scene import Scene
 

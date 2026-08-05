@@ -2,8 +2,35 @@ from __future__ import annotations
 
 import pytest
 
-from pyrrange.arrange import Arrange, StepError, on_stage, step
+from pyrrange._core import Arrange, StepError, arrange, on_stage, step
 from pyrrange.scene import Scene
+
+
+@step("user")
+def register(email: str = "test@example.com"):
+    return {"type": "user", "email": email, "verified": False}
+
+
+@step("user")
+def verified(user: dict = on_stage()):
+    user["verified"] = True
+    return user
+
+
+@step("order")
+def create(total: int = 100):
+    return {"total": total, "paid": False}
+
+
+@step("order")
+def paid(order: dict = on_stage()):
+    order["paid"] = True
+    return order
+
+
+@step("receipt")
+def with_receipt(order: dict = on_stage()):
+    return {"order_total": order["total"]}
 
 
 class UserArrange(Arrange):
@@ -32,109 +59,117 @@ class OrderArrange(Arrange):
         return {"order_total": order["total"]}
 
 
-def test_step_should_return_self_for_chaining() -> None:
-    chain = UserArrange()
-    result = chain.register()
-    assert result is chain
+def test_step_should_record_the_call_without_running_it() -> None:
+    calls: list[str] = []
+
+    @step("noisy")
+    def noisy():
+        calls.append("ran")
+
+    record = noisy()
+
+    assert calls == []
+    arrange(record)
+    assert calls == ["ran"]
 
 
 def test_step_should_preserve_args() -> None:
-    scene = OrderArrange().create(50).arrange()
+    scene = arrange(create(50))
     assert scene.order["total"] == 50
 
 
 def test_step_should_preserve_kwargs() -> None:
-    scene = UserArrange().register(email="custom@test.com").arrange()
+    scene = arrange(register(email="custom@test.com"))
     assert scene.user["email"] == "custom@test.com"
 
 
-def test_label_should_default_to_method_name() -> None:
-    class SimpleArrange(Arrange):
-        @step
-        def do_thing(self):
-            return "done"
+def test_label_should_default_to_function_name() -> None:
+    @step
+    def do_thing():
+        return "done"
 
-    scene = SimpleArrange().do_thing().arrange()
+    scene = arrange(do_thing())
+
     assert scene["do_thing"] == "done"
 
 
 def test_label_should_use_custom_value_when_provided() -> None:
-    scene = UserArrange().register().arrange()
+    scene = arrange(register())
     assert "user" in scene
 
 
 def test_label_should_accept_keyword_argument() -> None:
-    class KeywordArrange(Arrange):
-        @step(label="custom")
-        def do_thing(self):
-            return "done"
+    @step(label="custom")
+    def do_thing():
+        return "done"
 
-    scene = KeywordArrange().do_thing().arrange()
+    scene = arrange(do_thing())
+
     assert scene["custom"] == "done"
 
 
 def test_labels_should_be_accessible_after_arrange() -> None:
-    scene = OrderArrange().create().paid().with_receipt().arrange()
+    scene = arrange(create(), paid(), with_receipt())
     assert scene["order"]["paid"] is True
     assert scene["receipt"]["order_total"] == 100
 
 
 def test_label_should_overwrite_when_same() -> None:
-    scene = UserArrange().register().verified().arrange()
+    scene = arrange(register(), verified())
     assert scene["user"]["verified"] is True
 
 
-def test_step_should_inject_from_context_when_no_default() -> None:
-    scene = UserArrange().register().verified().arrange()
+def test_step_should_inject_from_the_scene_being_built() -> None:
+    scene = arrange(register(), verified())
     assert scene["user"]["verified"] is True
     assert scene["user"]["email"] == "test@example.com"
 
 
-def test_step_should_not_inject_when_param_has_default() -> None:
-    class SafeArrange(Arrange):
-        @step("email")
-        def create_email(self):
-            return "from_context@example.com"
+def test_step_should_not_inject_when_param_has_a_plain_default() -> None:
+    @step("email")
+    def create_email():
+        return "from_context@example.com"
 
-        @step("message")
-        def send(self, email: str = "default@example.com"):
-            return f"sent to {email}"
+    @step("message")
+    def send(email: str = "default@example.com"):
+        return f"sent to {email}"
 
-    scene = SafeArrange().create_email().send().arrange()
+    scene = arrange(create_email(), send())
+
     assert scene["message"] == "sent to default@example.com"
 
 
-def test_step_should_prefer_caller_kwargs_over_context() -> None:
-    scene = UserArrange().register().verified(user={"verified": False, "email": "override"}).arrange()
+def test_step_should_prefer_caller_kwargs_over_the_scene() -> None:
+    scene = arrange(register(), verified(user={"verified": False, "email": "override"}))
     assert scene["user"]["verified"] is True
     assert scene["user"]["email"] == "override"
 
 
-def test_step_should_inject_multiple_params_from_context() -> None:
-    class MultiArrange(Arrange):
-        @step("api_client")
-        def create_client(self):
-            return "client_obj"
+def test_step_should_inject_multiple_params() -> None:
+    @step("api_client")
+    def create_client():
+        return "client_obj"
 
-        @step("token")
-        def create_token(self):
-            return "token_123"
+    @step("token")
+    def create_token():
+        return "token_123"
 
-        @step("result")
-        def use_both(self, api_client, token):
-            return f"{api_client}:{token}"
+    @step("result")
+    def use_both(api_client: str = on_stage(), token: str = on_stage()):
+        return f"{api_client}:{token}"
 
-    scene = MultiArrange().create_client().create_token().use_both().arrange()
+    scene = arrange(create_client(), create_token(), use_both())
+
     assert scene["result"] == "client_obj:token_123"
 
 
 def test_arrange_should_return_scene() -> None:
-    scene = UserArrange().register().arrange()
+    scene = arrange(register())
     assert isinstance(scene, Scene)
 
 
-def test_arrange_should_return_scene_when_chain_empty() -> None:
-    scene = UserArrange().arrange()
+def test_arrange_should_return_scene_when_given_no_steps() -> None:
+    scene = arrange()
     assert isinstance(scene, Scene)
 
 

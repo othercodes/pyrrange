@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pyrrange.arrange import Arrange, step
+from pyrrange._core import Arrange, step
 from pyrrange.scene import Scene
 
 _torn_down = False
