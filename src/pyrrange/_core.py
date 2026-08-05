@@ -42,16 +42,16 @@ class StepError(Exception):
         step_name: str,
         step_index: int,
         total_steps: int,
-        arrange_class: str,
+        step_module: str,
         previous_result: Any,
     ) -> None:
         self.step_name = step_name
         self.step_index = step_index
         self.total_steps = total_steps
-        self.arrange_class = arrange_class
+        self.step_module = step_module
         self.previous_result = previous_result
         super().__init__(
-            f"Step {step_index}/{total_steps} '{step_name}' failed on {arrange_class}\n"
+            f"Step {step_index}/{total_steps} '{step_name}' failed in {step_module}\n"
             f"  Previous result: {previous_result!r}"
         )
 
@@ -234,7 +234,7 @@ class Arrange:
                     step_name=record.label,
                     step_index=index,
                     total_steps=total,
-                    arrange_class=type(self).__name__,
+                    step_module=getattr(record.fn, "__module__", "<unknown>"),
                     previous_result=self._context._last_result,
                 ) from exc
             self._context.set_result(record.label, result)
