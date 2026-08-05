@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 import pytest
 
-from pyrrange._core import _ThenRecord, arrange
+from pyrrange._core import Record, arrange
 from pyrrange.scene import Scene
 
 _Scope = Literal["session", "package", "module", "class", "function"]
@@ -14,7 +14,7 @@ _scene_key = pytest.StashKey[Scene]()
 
 
 def scene_fixture(
-    *records: _ThenRecord,
+    *records: Record,
     scope: _Scope = "function",
     scene: type[Scene] = Scene,
     teardown: Callable[[Scene], None] | None = None,

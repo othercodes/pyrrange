@@ -42,7 +42,7 @@ def test_step_error_should_include_step_index_and_total() -> None:
 
 
 def test_step_error_should_include_the_module_that_defines_the_step() -> None:
-    with pytest.raises(StepError, match="tests.test_errors"):
+    with pytest.raises(StepError, match=r"tests\.test_errors"):
         arrange(fail_with_key_error())
 
 

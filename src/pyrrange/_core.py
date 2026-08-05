@@ -3,14 +3,13 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, Concatenate, ParamSpec, TypeVar, overload
+from typing import Any, ParamSpec, Protocol, TypeVar, overload
 
 from pyrrange.context import Context
 from pyrrange.scene import Scene
 
-F = TypeVar("F", bound=Callable[..., Any])
-A = TypeVar("A", bound="Arrange")
 P = ParamSpec("P")
+S = TypeVar("S", bound=Scene)
 
 
 class _OnStage:
@@ -56,17 +55,48 @@ class StepError(Exception):
         )
 
 
-@overload
-def step(fn: Callable[Concatenate[A, P], object]) -> Callable[Concatenate[A, P], A]: ...  # pragma: no cover
+class Record:
+    """A step call captured for later execution. Produced by calling a decorated step."""
+
+    __slots__ = ("args", "fn", "kwargs", "label", "params")
+
+    def __init__(
+        self,
+        fn: Callable[..., Any],
+        label: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        params: tuple[inspect.Parameter, ...],
+    ) -> None:
+        self.fn = fn
+        self.label = label
+        self.args = args
+        self.kwargs = kwargs
+        self.params = params
+
+    def execute(self, context: Context) -> Any:
+        return self.fn(**_resolve_kwargs(self.params, context, self.args, self.kwargs))
+
+    def __repr__(self) -> str:
+        return f"Record({self.label!r}, {self.fn.__name__})"
+
+
+class _Step(Protocol[P]):
+    """A decorated step: same call signature as the function, but records instead of running."""
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Record: ...  # pragma: no cover
 
 
 @overload
-def step(
-    fn: str,
-) -> Callable[[Callable[Concatenate[A, P], object]], Callable[Concatenate[A, P], A]]: ...  # pragma: no cover
+def step(fn: Callable[P, object]) -> _Step[P]: ...  # pragma: no cover
+
+
+@overload
+def step(fn: str) -> Callable[[Callable[P, object]], _Step[P]]: ...  # pragma: no cover
 
 
 def step(fn: Any = None, label: str | None = None) -> Any:
+    """Turn a function into a step: calling it records the call instead of running it."""
     if isinstance(fn, str):
         return _make_step_decorator(fn)
 
@@ -76,47 +106,27 @@ def step(fn: Any = None, label: str | None = None) -> Any:
     return _make_step_decorator(None)(fn)
 
 
-def _cache_params(fn: Callable[..., Any], skip_self: bool) -> tuple[inspect.Parameter, ...]:
-    params = tuple(inspect.signature(fn).parameters.values())
-    if skip_self and params:
-        params = params[1:]
-    return params
+def _cache_params(fn: Callable[..., Any]) -> tuple[inspect.Parameter, ...]:
+    return tuple(inspect.signature(fn).parameters.values())
 
 
-class _StepDef:
-    """A decorated step, usable as a free function or as a method.
+def _make_step_decorator(label: str | None) -> Callable[[Callable[..., Any]], Any]:
+    def decorator(fn: Callable[..., Any]) -> Any:
+        step_label = label or fn.__name__
+        params = _cache_params(fn)
 
-    Calling it directly records the call and returns a record for ``arrange()``.
-    Reaching it through an instance records onto that arrange and returns it, so
-    class-based chains keep working while they are migrated away.
-    """
-
-    def __init__(self, fn: Callable[..., Any], label: str | None) -> None:
-        self.fn = fn
-        self.label = label or fn.__name__
-        self.free_params = _cache_params(fn, skip_self=False)
-        self.bound_params = _cache_params(fn, skip_self=True)
-        wraps(fn)(self)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> _ThenRecord:
-        return _ThenRecord(self.fn, self.label, args, kwargs, self.free_params)
-
-    def __get__(self, obj: Arrange | None, objtype: type[Arrange] | None = None) -> Any:
-        if obj is None:
-            return self
-
-        def record(*args: Any, **kwargs: Any) -> Arrange:
-            obj._recorded_steps.append(_StepRecord(self.fn, self.label, args, kwargs, self.bound_params))
-            return obj
+        @wraps(fn)
+        def record(*args: Any, **kwargs: Any) -> Record:
+            return Record(fn, step_label, args, kwargs, params)
 
         return record
 
-
-def _make_step_decorator(label: str | None) -> Callable[[F], F]:
-    def decorator(fn: F) -> F:
-        return _StepDef(fn, label)  # type: ignore[return-value]
-
     return decorator
+
+
+def then(label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Record:
+    """Record a one-off callable as a step, for logic not worth naming with @step."""
+    return Record(fn, label, args, kwargs, _cache_params(fn))
 
 
 def _resolve_kwargs(
@@ -148,118 +158,47 @@ def _resolve_kwargs(
     return resolved
 
 
-class _StepRecord:
-    __slots__ = ("args", "fn", "kwargs", "label", "params")
-
-    def __init__(
-        self,
-        fn: Callable[..., Any],
-        label: str,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-        params: tuple[inspect.Parameter, ...],
-    ) -> None:
-        self.fn = fn
-        self.label = label
-        self.args = args
-        self.kwargs = kwargs
-        self.params = params
-
-    def execute(self, arrange: Arrange) -> Any:
-        kwargs = _resolve_kwargs(self.params, arrange._context, self.args, self.kwargs)
-        return self.fn(arrange, **kwargs)
+@overload
+def arrange(
+    *records: Record,
+    scene: type[S],
+    teardown: Callable[[S], None] | None = None,
+) -> S: ...  # pragma: no cover
 
 
-class _ThenRecord:
-    __slots__ = ("args", "fn", "kwargs", "label", "params")
-
-    def __init__(
-        self,
-        fn: Callable[..., Any],
-        label: str,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-        params: tuple[inspect.Parameter, ...],
-    ) -> None:
-        self.fn = fn
-        self.label = label
-        self.args = args
-        self.kwargs = kwargs
-        self.params = params
-
-    def execute(self, _arrange: Arrange) -> Any:
-        kwargs = _resolve_kwargs(self.params, _arrange._context, self.args, self.kwargs)
-        return self.fn(**kwargs)
-
-
-class Arrange:
-    def __init__(self) -> None:
-        self._recorded_steps: list[_StepRecord | _ThenRecord] = []
-        self._context: Context = Context()
-
-    def clone(self: A) -> A:
-        new: A = type(self)()
-        new._recorded_steps = self._recorded_steps.copy()
-        return new
-
-    def then(self: A, label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> A:
-        self._recorded_steps.append(_ThenRecord(fn, label, args, kwargs, _cache_params(fn, skip_self=False)))
-        return self
-
-    def teardown(self, scene: Scene) -> None:
-        """Hook for cleaning up resources after a test.
-
-        Override in subclasses to release external state that cannot be
-        rolled back automatically — polymorphic model deletion, external
-        service cleanup, file removal, etc. The base implementation is a
-        no-op so calling ``scene.teardown()`` is always safe.
-
-        Called automatically when a Scene is used as a context manager
-        (``with ... as scene:``), or manually via ``scene.teardown()``.
-
-        :param scene: The Scene produced by ``arrange()``. Use
-            ``scene["label"]`` or ``scene.label`` to access step results
-            that need cleanup.
-        """
-
-    def arrange(self) -> Scene:
-        total = len(self._recorded_steps)
-        for index, record in enumerate(self._recorded_steps, start=1):
-            try:
-                result = record.execute(self)
-            except StepError:
-                raise
-            except Exception as exc:
-                raise StepError(
-                    step_name=record.label,
-                    step_index=index,
-                    total_steps=total,
-                    step_module=getattr(record.fn, "__module__", "<unknown>"),
-                    previous_result=self._context._last_result,
-                ) from exc
-            self._context.set_result(record.label, result)
-        scene_cls = getattr(self, "SceneType", Scene)
-        return scene_cls(self._context, self)
-
-
-def then(label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> _ThenRecord:
-    """Record a one-off callable as a step, for logic not worth naming with @step."""
-    return _ThenRecord(fn, label, args, kwargs, _cache_params(fn, skip_self=False))
+@overload
+def arrange(
+    *records: Record,
+    teardown: Callable[[Scene], None] | None = None,
+) -> Scene: ...  # pragma: no cover
 
 
 def arrange(
-    *records: _ThenRecord,
+    *records: Record,
     scene: type[Scene] = Scene,
-    teardown: Callable[[Scene], None] | None = None,
-) -> Scene:
+    teardown: Callable[[Any], None] | None = None,
+) -> Any:
     """Run the recorded steps in order and return the resulting scene.
 
     :param scene: Scene subclass to build, declaring the labels for a type checker.
     :param teardown: Called with the scene on ``teardown()`` or on leaving a ``with``.
     """
-    plan = Arrange()
-    plan._recorded_steps.extend(records)
-    if teardown is not None:
-        plan.teardown = teardown  # type: ignore[method-assign]
-    plan.SceneType = scene  # type: ignore[attr-defined]
-    return plan.arrange()
+    context = Context()
+    total = len(records)
+
+    for index, record in enumerate(records, start=1):
+        try:
+            result = record.execute(context)
+        except StepError:
+            raise
+        except Exception as exc:
+            raise StepError(
+                step_name=record.label,
+                step_index=index,
+                total_steps=total,
+                step_module=getattr(record.fn, "__module__", "<unknown>"),
+                previous_result=context._last_result,
+            ) from exc
+        context.set_result(record.label, result)
+
+    return scene(context, teardown)

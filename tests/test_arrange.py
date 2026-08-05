@@ -315,3 +315,8 @@ def test_step_without_on_stage_should_inject_by_name() -> None:
     scene = arrange(register(), greet())
 
     assert scene["greeting"] == "hi test@example.com"
+
+
+def test_record_should_repr_for_debugging() -> None:
+    # A plan is a plain tuple, so its repr is what you read when inspecting one.
+    assert repr(register()) == "Record('user', register)"

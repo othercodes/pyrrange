@@ -71,17 +71,15 @@ def test_context_manager_should_call_teardown_on_exit(torn_down: list[Scene]) ->
 
 
 def test_context_manager_should_call_teardown_on_exception(torn_down: list[Scene]) -> None:
-    with pytest.raises(RuntimeError):
-        with arrange(create(), teardown=_record_into(torn_down)):
-            raise RuntimeError("test crash")
+    with pytest.raises(RuntimeError), arrange(create(), teardown=_record_into(torn_down)):
+        raise RuntimeError("test crash")
 
     assert len(torn_down) == 1
 
 
 def test_context_manager_should_not_suppress_exceptions(torn_down: list[Scene]) -> None:
-    with pytest.raises(ValueError, match="propagate me"):
-        with arrange(create(), teardown=_record_into(torn_down)):
-            raise ValueError("propagate me")
+    with pytest.raises(ValueError, match="propagate me"), arrange(create(), teardown=_record_into(torn_down)):
+        raise ValueError("propagate me")
 
     assert len(torn_down) == 1
 
