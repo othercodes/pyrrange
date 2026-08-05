@@ -11,7 +11,6 @@ from pyrrange.scene import Scene
 F = TypeVar("F", bound=Callable[..., Any])
 A = TypeVar("A", bound="Arrange")
 P = ParamSpec("P")
-R = TypeVar("R")
 
 
 class _OnStage:
@@ -58,13 +57,13 @@ class StepError(Exception):
 
 
 @overload
-def step(fn: Callable[Concatenate[A, P], R]) -> Callable[Concatenate[A, P], A]: ...  # pragma: no cover
+def step(fn: Callable[Concatenate[A, P], object]) -> Callable[Concatenate[A, P], A]: ...  # pragma: no cover
 
 
 @overload
 def step(
     fn: str,
-) -> Callable[[Callable[Concatenate[A, P], R]], Callable[Concatenate[A, P], A]]: ...  # pragma: no cover
+) -> Callable[[Callable[Concatenate[A, P], object]], Callable[Concatenate[A, P], A]]: ...  # pragma: no cover
 
 
 def step(fn: Any = None, label: str | None = None) -> Any:
