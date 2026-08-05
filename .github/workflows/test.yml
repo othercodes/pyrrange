@@ -67,7 +67,6 @@ jobs:
 
       - name: Run mypy
         run: uv run mypy src/pyrrange
-        continue-on-error: true
 
   test:
     name: Test (py${{ matrix.python-version }})
@@ -155,8 +154,9 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ needs.typecheck.result }}" == "failure" ]; then
-            echo "⚠️ Typecheck failed (non-blocking)"
+          if [ "${{ needs.typecheck.result }}" != "success" ]; then
+            echo "❌ Typecheck failed"
+            exit 1
           fi
 
           if [ "${{ needs.sonarcloud.result }}" != "success" ]; then
