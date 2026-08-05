@@ -76,6 +76,10 @@ exclude = [
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.flake8-bugbear]
+# on_stage() is a sentinel, not shared mutable state, so B008 does not apply.
+extend-immutable-calls = ["pyrrange.on_stage", "pyrrange.arrange.on_stage"]
+
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]
 addopts = "-p no:pyrrange --cov=pyrrange --cov-report=term-missing --cov-fail-under=100"

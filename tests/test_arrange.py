@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyrrange.arrange import Arrange, StepError, step
+from pyrrange.arrange import Arrange, StepError, on_stage, step
 from pyrrange.scene import Scene
 
 
@@ -317,3 +317,52 @@ def test_clone_should_allow_multiple_independent_executions() -> None:
     scene_b = template.clone().arrange()
     assert scene_a.user is not scene_b.user
     assert scene_a.user["email"] == scene_b.user["email"]
+
+
+class StagedArrange(Arrange):
+    @step("user")
+    def register(self, email: str = "test@example.com") -> dict:
+        return {"email": email, "verified": False}
+
+    @step("user")
+    def verified(self, user: dict = on_stage()) -> dict:
+        user["verified"] = True
+        return user
+
+    @step("token")
+    def with_token(self, owner: dict = on_stage("user")) -> str:
+        return f"token-{owner['email']}"
+
+
+def test_on_stage_should_inject_by_parameter_name() -> None:
+    scene = StagedArrange().register().verified().arrange()
+    assert scene["user"]["verified"] is True
+
+
+def test_on_stage_should_inject_by_explicit_label() -> None:
+    # The label and the parameter deliberately differ: owner reads the "user" label.
+    scene = StagedArrange().register().with_token().arrange()
+    assert scene["token"] == "token-test@example.com"
+
+
+def test_on_stage_should_prefer_caller_kwargs() -> None:
+    scene = StagedArrange().register().verified(user={"email": "other", "verified": False}).arrange()
+    assert scene["user"]["email"] == "other"
+
+
+def test_on_stage_should_raise_when_label_is_missing() -> None:
+    with pytest.raises(StepError) as exc_info:
+        StagedArrange().verified().arrange()
+    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert "No step result for label 'user'" in str(exc_info.value.__cause__)
+
+
+def test_on_stage_should_repr_for_debugging() -> None:
+    assert repr(on_stage()) == "on_stage()"
+    assert repr(on_stage("user")) == "on_stage('user')"
+
+
+def test_steps_without_on_stage_should_still_inject() -> None:
+    # The pre-on_stage style keeps working at runtime.
+    scene = UserArrange().register().verified().arrange()
+    assert scene["user"]["verified"] is True

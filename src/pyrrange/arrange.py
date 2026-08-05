@@ -3,13 +3,38 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, Protocol, TypeVar, overload
+from typing import Any, Concatenate, ParamSpec, TypeVar, overload
 
 from pyrrange.context import Context
 from pyrrange.scene import Scene
 
 F = TypeVar("F", bound=Callable[..., Any])
 A = TypeVar("A", bound="Arrange")
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class _OnStage:
+    __slots__ = ("label",)
+
+    def __init__(self, label: str | None) -> None:
+        self.label = label
+
+    def __repr__(self) -> str:
+        return f"on_stage({self.label!r})" if self.label else "on_stage()"
+
+
+def on_stage(label: str | None = None) -> Any:
+    """Mark a step parameter as already in the scene, to be injected when the step runs.
+
+    A type checker sees an ordinary default, so the parameter is optional at the call
+    site and the remaining arguments keep being checked. At runtime the default is this
+    sentinel, so the value is taken from the scene being built instead.
+
+    :param label: Scene label to read. Defaults to the parameter's own name, which is
+        what you want unless the label and the parameter need different names.
+    """
+    return _OnStage(label)
 
 
 class StepError(Exception):
@@ -32,24 +57,14 @@ class StepError(Exception):
         )
 
 
-class _StepMethod(Protocol):
-    """A recorded step: takes the step's own arguments, returns the receiver so chains keep its type.
-
-    A decorator cannot express "this signature, minus the injected params, returning Self".
-    ``ParamSpec`` would demand the injected params at the call site — ``.verified()`` would
-    require ``user`` — which defeats injection. A generic ``__get__`` binds to the receiver
-    instead, at the cost of unchecked call arguments.
-    """
-
-    def __get__(self, obj: A, objtype: type[A] | None = None) -> Callable[..., A]: ...  # pragma: no cover
+@overload
+def step(fn: Callable[Concatenate[A, P], R]) -> Callable[Concatenate[A, P], A]: ...  # pragma: no cover
 
 
 @overload
-def step(fn: F) -> _StepMethod: ...  # pragma: no cover
-
-
-@overload
-def step(fn: str) -> Callable[[F], _StepMethod]: ...  # pragma: no cover
+def step(
+    fn: str,
+) -> Callable[[Callable[Concatenate[A, P], R]], Callable[Concatenate[A, P], A]]: ...  # pragma: no cover
 
 
 def step(fn: Any = None, label: str | None = None) -> Any:
@@ -97,6 +112,11 @@ def _resolve_kwargs(
 
     for param in params:
         if param.name in recorded_kwargs:
+            continue
+        if isinstance(param.default, _OnStage):
+            # Declaring on_stage() asserts the label is there; a missing one is a
+            # programming error, so let Context raise and list what is available.
+            resolved[param.name] = context[param.default.label or param.name]
             continue
         if param.default is inspect.Parameter.empty and param.name in context:
             resolved[param.name] = context[param.name]
