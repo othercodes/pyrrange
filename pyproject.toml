@@ -1,14 +1,14 @@
 [project]
 name = "pyrrange"
 dynamic = ["version"]
-description = "Expressive, fluent test scenario preparation for Python."
+description = "Typed, composable test scenario preparation for Python."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [
     { name = "Unay Santisteban", email = "usantisteban@othercode.io" }
 ]
-keywords = ["testing", "arrange", "scenarios", "fluent", "pytest"]
+keywords = ["testing", "arrange", "scenarios", "composable", "fixtures", "pytest"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
