@@ -5,7 +5,6 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, ParamSpec, Protocol, TypeVar, overload
 
-from pyrrange.context import Context
 from pyrrange.scene import Scene
 
 P = ParamSpec("P")
@@ -45,10 +44,6 @@ class StepError(Exception):
         previous_result: Any,
     ) -> None:
         self.step_name = step_name
-        self.step_index = step_index
-        self.total_steps = total_steps
-        self.step_module = step_module
-        self.previous_result = previous_result
         super().__init__(
             f"Step {step_index}/{total_steps} '{step_name}' failed in {step_module}\n"
             f"  Previous result: {previous_result!r}"
@@ -74,8 +69,8 @@ class Record:
         self.kwargs = kwargs
         self.params = params
 
-    def execute(self, context: Context) -> Any:
-        return self.fn(**_resolve_kwargs(self.params, context, self.args, self.kwargs))
+    def execute(self, results: dict[str, Any]) -> Any:
+        return self.fn(**_resolve_kwargs(self.params, results, self.args, self.kwargs))
 
     def __repr__(self) -> str:
         return f"Record({self.label!r}, {self.fn.__name__})"
@@ -95,13 +90,10 @@ def step(fn: Callable[P, object]) -> _Step[P]: ...  # pragma: no cover
 def step(fn: str) -> Callable[[Callable[P, object]], _Step[P]]: ...  # pragma: no cover
 
 
-def step(fn: Any = None, label: str | None = None) -> Any:
+def step(fn: Any) -> Any:
     """Turn a function into a step: calling it records the call instead of running it."""
     if isinstance(fn, str):
         return _make_step_decorator(fn)
-
-    if fn is None:
-        return _make_step_decorator(label)
 
     return _make_step_decorator(None)(fn)
 
@@ -112,6 +104,12 @@ def _cache_params(fn: Callable[..., Any]) -> tuple[inspect.Parameter, ...]:
 
 def _make_step_decorator(label: str | None) -> Callable[[Callable[..., Any]], Any]:
     def decorator(fn: Callable[..., Any]) -> Any:
+        if getattr(fn, "_is_step", False):
+            raise TypeError(
+                f"'{fn.__name__}' is already a step; stacking @step would record the inner "
+                f"decorator instead of the function, leaving a Record in the scene"
+            )
+
         step_label = label or fn.__name__
         params = _cache_params(fn)
 
@@ -119,6 +117,7 @@ def _make_step_decorator(label: str | None) -> Callable[[Callable[..., Any]], An
         def record(*args: Any, **kwargs: Any) -> Record:
             return Record(fn, step_label, args, kwargs, params)
 
+        record._is_step = True  # type: ignore[attr-defined]
         return record
 
     return decorator
@@ -131,7 +130,7 @@ def then(label: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Recor
 
 def _resolve_kwargs(
     params: tuple[inspect.Parameter, ...],
-    context: Context,
+    results: dict[str, Any],
     recorded_args: tuple[Any, ...],
     recorded_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
@@ -141,12 +140,15 @@ def _resolve_kwargs(
         if param.name in recorded_kwargs:
             continue
         if isinstance(param.default, _OnStage):
-            # Declaring on_stage() asserts the label is there; a missing one is a
-            # programming error, so let Context raise and list what is available.
-            resolved[param.name] = context[param.default.label or param.name]
+            label = param.default.label or param.name
+            if label not in results:
+                # Declaring on_stage() asserts the label is there; a missing one is a
+                # programming error, so say which labels do exist.
+                raise KeyError(f"No step result for label '{label}'. Available: {list(results)}")
+            resolved[param.name] = results[label]
             continue
-        if param.default is inspect.Parameter.empty and param.name in context:
-            resolved[param.name] = context[param.name]
+        if param.default is inspect.Parameter.empty and param.name in results:
+            resolved[param.name] = results[param.name]
 
     unresolved = [p for p in params if p.name not in resolved and p.name not in recorded_kwargs]
     for i, arg in enumerate(recorded_args):
@@ -183,12 +185,24 @@ def arrange(
     :param scene: Scene subclass to build, declaring the labels for a type checker.
     :param teardown: Called with the scene on ``teardown()`` or on leaving a ``with``.
     """
-    context = Context()
+    if not (isinstance(scene, type) and issubclass(scene, Scene)):
+        got = scene.__name__ if isinstance(scene, type) else type(scene).__name__
+        raise TypeError(f"scene must be a Scene subclass, got {got}")
+
+    for record in records:
+        if not isinstance(record, Record):
+            raise TypeError(
+                f"arrange() expects steps, got {type(record).__name__}. "
+                f"Call the step to record it: arrange(registered()), not arrange(registered)"
+            )
+
+    results: dict[str, Any] = {}
+    previous_result: Any = None
     total = len(records)
 
     for index, record in enumerate(records, start=1):
         try:
-            result = record.execute(context)
+            result = record.execute(results)
         except StepError:
             raise
         except Exception as exc:
@@ -197,8 +211,9 @@ def arrange(
                 step_index=index,
                 total_steps=total,
                 step_module=getattr(record.fn, "__module__", "<unknown>"),
-                previous_result=context._last_result,
+                previous_result=previous_result,
             ) from exc
-        context.set_result(record.label, result)
+        results[record.label] = result
+        previous_result = result
 
-    return scene(context, teardown)
+    return scene(results, teardown)

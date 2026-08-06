@@ -72,16 +72,6 @@ def test_label_should_use_custom_value_when_provided() -> None:
     assert "user" in scene
 
 
-def test_label_should_accept_keyword_argument() -> None:
-    @step(label="custom")
-    def do_thing():
-        return "done"
-
-    scene = arrange(do_thing())
-
-    assert scene["custom"] == "done"
-
-
 def test_labels_should_be_accessible_after_arrange() -> None:
     scene = arrange(create(), paid(), with_receipt())
     assert scene["order"]["paid"] is True
@@ -320,3 +310,22 @@ def test_step_without_on_stage_should_inject_by_name() -> None:
 def test_record_should_repr_for_debugging() -> None:
     # A plan is a plain tuple, so its repr is what you read when inspecting one.
     assert repr(register()) == "Record('user', register)"
+
+
+def test_arrange_should_reject_values_that_are_not_records() -> None:
+    with pytest.raises(TypeError, match="expects steps, got str"):
+        arrange("not a record")
+
+
+def test_arrange_should_reject_a_scene_that_is_not_a_scene_subclass() -> None:
+    with pytest.raises(TypeError, match="scene must be a Scene subclass, got dict"):
+        arrange(register(), scene=dict)
+
+
+def test_step_should_reject_being_applied_twice() -> None:
+    with pytest.raises(TypeError, match="already a step"):
+
+        @step("outer")
+        @step("inner")
+        def double():
+            return 1

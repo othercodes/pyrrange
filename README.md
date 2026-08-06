@@ -157,7 +157,19 @@ def test_checkout_with_amex():
     scene = arrange(*paying_customer(brand="amex"))
 ```
 
-No cloning, no shared state: the same records can be reused across tests and modules.
+No cloning needed: the same records can be reused across tests and modules.
+
+> **One caveat.** A record holds the arguments you passed, by reference. If one of them is
+> mutable and a step mutates it, that change is visible to every later run of the plan:
+>
+> ```python
+> OPTIONS = {"retries": 0}
+> PLAN = (configured(OPTIONS),)   # every arrange(*PLAN) shares this dict
+> ```
+>
+> Pass immutable values, or build the plan inside a function so each call gets fresh
+> arguments. This is ordinary Python aliasing, but a module-level plan makes it easier to
+> hit than rebuilding the steps per test.
 
 ### Use in tests
 
@@ -253,7 +265,14 @@ def test_checkout(user, api_client):
 # teardown runs automatically via plugin hook
 ```
 
-If a scene label collides with a fixture of the same name, the scene value wins.
+If a scene label collides with a fixture of the same name, the scene value wins and the fixture
+never runs — pyrrange emits an `ArrangeShadowWarning` so the collision doesn't pass unnoticed.
+Silence it per-project with:
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::pyrrange.pytest.ArrangeShadowWarning"]
+```
 
 The marker coexists with regular pytest fixtures:
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -11,6 +12,10 @@ from pyrrange.scene import Scene
 _Scope = Literal["session", "package", "module", "class", "function"]
 
 _scene_key = pytest.StashKey[Scene]()
+
+
+class ArrangeShadowWarning(UserWarning):
+    """An arrange label took precedence over a pytest fixture of the same name."""
 
 
 def scene_fixture(
@@ -50,10 +55,21 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     item.stash[_scene_key] = scene
 
     # tryfirst: filling funcargs before pytest resolves fixtures is what lets a scene
-    # label satisfy a test parameter that has no fixture behind it at all.
+    # label satisfy a test parameter that has no fixture behind it at all. The flip side
+    # is that a real fixture of the same name never runs, so say so.
+    fixtureinfo = getattr(item, "_fixtureinfo", None)
+    defined_fixtures = getattr(fixtureinfo, "name2fixturedefs", {})
+
     for name in getattr(item, "fixturenames", []):
-        if name in scene:
-            item.funcargs[name] = scene[name]  # type: ignore[attr-defined]
+        if name not in scene:
+            continue
+        if name in defined_fixtures:
+            warnings.warn(
+                f"arrange label '{name}' shadows the fixture of the same name; the arrange value wins",
+                ArrangeShadowWarning,
+                stacklevel=1,
+            )
+        item.funcargs[name] = scene[name]  # type: ignore[attr-defined]
 
 
 def pytest_runtest_teardown(item: pytest.Item) -> None:

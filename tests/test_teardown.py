@@ -92,5 +92,4 @@ def test_scene_should_support_contains_check() -> None:
 
 def test_scene_should_include_labels_in_repr() -> None:
     scene = arrange(create())
-    assert "Context" in repr(scene)
-    assert "create" in repr(scene)
+    assert repr(scene) == "Scene(['create'])"
