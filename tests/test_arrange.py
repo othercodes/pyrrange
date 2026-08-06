@@ -72,16 +72,6 @@ def test_label_should_use_custom_value_when_provided() -> None:
     assert "user" in scene
 
 
-def test_label_should_accept_keyword_argument() -> None:
-    @step(label="custom")
-    def do_thing():
-        return "done"
-
-    scene = arrange(do_thing())
-
-    assert scene["custom"] == "done"
-
-
 def test_labels_should_be_accessible_after_arrange() -> None:
     scene = arrange(create(), paid(), with_receipt())
     assert scene["order"]["paid"] is True

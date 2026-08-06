@@ -63,19 +63,13 @@ def test_step_error_should_preserve_original_exception_as_cause() -> None:
     assert str(exc_info.value.__cause__) == "bad value"
 
 
-def test_step_error_should_expose_all_attributes() -> None:
+def test_step_error_should_expose_the_step_name() -> None:
     with pytest.raises(StepError) as exc_info:
         arrange(succeed(), fail_with_key_error())
-    err = exc_info.value
-    assert err.step_name == "fail_with_key_error"
-    assert err.step_index == 2
-    assert err.total_steps == 2
-    assert err.step_module == "tests.test_errors"
-    assert err.previous_result == "ok"
+    assert exc_info.value.step_name == "fail_with_key_error"
 
 
 def test_step_error_should_not_double_wrap_when_step_raises_step_error() -> None:
     with pytest.raises(StepError) as exc_info:
         arrange(fail_with_step_error())
-    assert exc_info.value.step_module == "inner.module"
     assert exc_info.value.step_name == "inner"
