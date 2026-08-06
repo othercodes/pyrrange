@@ -15,10 +15,16 @@ class Scene:
         return self._context[label]
 
     def __getattr__(self, name: str) -> Any:
+        # Read _context out of __dict__: reaching it as an attribute on a half-built
+        # instance — during copy, before __init__ runs — would re-enter __getattr__
+        # forever. Going through __dict__ also leaves labels starting with "_" usable.
+        context: Context | None = self.__dict__.get("_context")
+        if context is None:
+            raise AttributeError(name)
         try:
-            return self._context[name]
+            return context[name]
         except KeyError:
-            raise AttributeError(f"Scene has no label '{name}'. Available: {self._context!r}") from None
+            raise AttributeError(f"Scene has no label '{name}'. Available: {context!r}") from None
 
     def __contains__(self, label: str) -> bool:
         return label in self._context

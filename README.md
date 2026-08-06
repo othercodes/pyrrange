@@ -157,7 +157,19 @@ def test_checkout_with_amex():
     scene = arrange(*paying_customer(brand="amex"))
 ```
 
-No cloning, no shared state: the same records can be reused across tests and modules.
+No cloning needed: the same records can be reused across tests and modules.
+
+> **One caveat.** A record holds the arguments you passed, by reference. If one of them is
+> mutable and a step mutates it, that change is visible to every later run of the plan:
+>
+> ```python
+> OPTIONS = {"retries": 0}
+> PLAN = (configured(OPTIONS),)   # every arrange(*PLAN) shares this dict
+> ```
+>
+> Pass immutable values, or build the plan inside a function so each call gets fresh
+> arguments. This is ordinary Python aliasing, but a module-level plan makes it easier to
+> hit than rebuilding the steps per test.
 
 ### Use in tests
 

@@ -112,6 +112,12 @@ def _cache_params(fn: Callable[..., Any]) -> tuple[inspect.Parameter, ...]:
 
 def _make_step_decorator(label: str | None) -> Callable[[Callable[..., Any]], Any]:
     def decorator(fn: Callable[..., Any]) -> Any:
+        if getattr(fn, "_is_step", False):
+            raise TypeError(
+                f"'{fn.__name__}' is already a step; stacking @step would record the inner "
+                f"decorator instead of the function, leaving a Record in the scene"
+            )
+
         step_label = label or fn.__name__
         params = _cache_params(fn)
 
@@ -119,6 +125,7 @@ def _make_step_decorator(label: str | None) -> Callable[[Callable[..., Any]], An
         def record(*args: Any, **kwargs: Any) -> Record:
             return Record(fn, step_label, args, kwargs, params)
 
+        record._is_step = True  # type: ignore[attr-defined]
         return record
 
     return decorator
@@ -183,6 +190,17 @@ def arrange(
     :param scene: Scene subclass to build, declaring the labels for a type checker.
     :param teardown: Called with the scene on ``teardown()`` or on leaving a ``with``.
     """
+    if not (isinstance(scene, type) and issubclass(scene, Scene)):
+        got = scene.__name__ if isinstance(scene, type) else type(scene).__name__
+        raise TypeError(f"scene must be a Scene subclass, got {got}")
+
+    for record in records:
+        if not isinstance(record, Record):
+            raise TypeError(
+                f"arrange() expects steps, got {type(record).__name__}. "
+                f"Call the step to record it: arrange(registered()), not arrange(registered)"
+            )
+
     context = Context()
     total = len(records)
 
