@@ -146,3 +146,52 @@ def test_scene_fixture_should_call_teardown(sf_teardown) -> None:
 
 def test_scene_fixture_teardown_should_have_been_called() -> None:
     assert "sf_created" in _scene_fixture_teardown_calls
+
+
+def test_marker_should_warn_when_a_label_shadows_a_fixture(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest("""
+        from pyrrange import step
+
+        @step("user")
+        def registered():
+            return "from-arrange"
+    """)
+    pytester.makepyfile("""
+        import pytest
+        from conftest import registered
+
+        @pytest.fixture
+        def user():
+            return "from-fixture"
+
+        @pytest.mark.arrange(registered())
+        def test_shadowed(user):
+            assert user == "from-arrange"
+    """)
+
+    result = pytester.runpytest("-p", "pyrrange")
+
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*ArrangeShadowWarning: arrange label 'user' shadows*"])
+
+
+def test_marker_should_not_warn_when_the_label_has_no_fixture(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest("""
+        from pyrrange import step
+
+        @step("user")
+        def registered():
+            return "from-arrange"
+    """)
+    pytester.makepyfile("""
+        import pytest
+        from conftest import registered
+
+        @pytest.mark.arrange(registered())
+        def test_not_shadowed(user):
+            assert user == "from-arrange"
+    """)
+
+    result = pytester.runpytest("-p", "pyrrange", "-W", "error::pyrrange.pytest.ArrangeShadowWarning")
+
+    result.assert_outcomes(passed=1)
